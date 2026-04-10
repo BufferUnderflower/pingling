@@ -1,0 +1,8 @@
+core_type: sing-box
+core_binary_path: /usr/local/bin/sing-box
+core_config_path: /etc/sing-box/config.json
+log_level: debug
+listen_addr: "0.0.0.0:9090"
+pid_file: /var/run/pingling.pid
+tray: true
+auto_connect: false

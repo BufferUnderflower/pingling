@@ -1,0 +1,38 @@
+[package]
+name = "ipc-server"
+version = "0.1.0"
+edition = "2021"
+description = "Newline-delimited JSON-RPC 2.0 server exposing the pingle VpnManager over UDS, TCP loopback, and a UDP discovery beacon."
+
+[[bin]]
+name = "ipc-server-headless"
+path = "src/bin/headless.rs"
+required-features = ["headless"]
+
+[features]
+default = []
+# Headless test daemon: pulls in core-mock + data + plugin-extism so the
+# binary can wire a mock VpnManager and (optionally) install a wasm
+# plugin from PINGLE_PLUGIN_WASM. Used by the Dart end-to-end smoke
+# test and by hand-driven plugin smoke tests.
+headless = [
+    "dep:core-mock",
+    "dep:data",
+    "dep:env_logger",
+    "dep:plugin-extism",
+]
+
+[dependencies]
+domain = { path = "../domain" }
+service = { path = "../service" }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+log = "0.4"
+core-mock = { path = "../core-mock", optional = true }
+data = { path = "../data", default-features = false, optional = true }
+env_logger = { version = "0.11", optional = true }
+plugin-extism = { path = "../plugin-extism", optional = true }
+
+[dev-dependencies]
+core-mock = { path = "../core-mock" }
+data = { path = "../data", default-features = false }

@@ -1,0 +1,20 @@
+[package]
+name = "pingle-pipeline-plugin"
+version = "0.1.0"
+edition = "2021"
+description = "Extism plugin slot for the pingle config processor pipeline"
+
+[lib]
+name = "pingle_pipeline_plugin"
+crate-type = ["rlib"]
+
+[dependencies]
+domain = { path = "../domain" }
+pingle-config-pipeline = { path = "../pingle-config-pipeline" }
+extism = "1.21"
+log = "0.4"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+[dev-dependencies]
+tempfile = "3"

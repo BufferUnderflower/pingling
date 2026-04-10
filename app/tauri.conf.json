@@ -1,0 +1,42 @@
+{
+  "$schema": "https://raw.githubusercontent.com/nicehash/tauri-schema/v2/src/schema.json",
+  "productName": "Pingle",
+  "version": "0.1.0",
+  "identifier": "one.pingle.vpn.standalone",
+  "build": {
+    "frontendDist": "./dist",
+    "devUrl": "http://localhost:1420",
+    "beforeDevCommand": "",
+    "beforeBuildCommand": ""
+  },
+  "app": {
+    "withGlobalTauri": true,
+    "windows": [
+      {
+        "label": "main",
+        "title": "pingling",
+        "width": 380,
+        "height": 420,
+        "resizable": false,
+        "visible": false,
+        "decorations": true
+      }
+    ],
+    "security": {
+      "csp": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: asset: https://asset.localhost",
+      "capabilities": ["default"]
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": "all",
+    "externalBin": ["binaries/sing-box"],
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.icns",
+      "icons/icon.ico"
+    ]
+  }
+}

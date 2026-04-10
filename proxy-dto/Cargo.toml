@@ -1,0 +1,15 @@
+[package]
+name = "proxy-dto"
+version = "0.1.0"
+edition = "2021"
+description = "Neutral, mihomo-dialect proxy outbound DTO for Pingle. Panel plugins return these typed structs and the daemon projects them to sing-box / xray / clash-meta native configs."
+license = "Apache-2.0"
+publish = false
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+serde_yaml = "0.9"
+
+[dev-dependencies]
+indoc = "2"

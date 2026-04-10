@@ -1,0 +1,105 @@
+name: CI
+
+on:
+  push:
+    branches: [main, "feat/*"]
+  workflow_dispatch:
+  release:
+    types: [published]
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: 0
+  SINGBOX_VERSION: "1.11.3"
+
+jobs:
+  # ── tests ──────────────────────────────────────────────────────────────
+  test-linux:
+    name: test · Linux
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo test --workspace --exclude app
+
+  test-macos:
+    name: test · macOS
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo test --workspace --exclude app
+
+  test-windows:
+    name: test · Windows
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo test --workspace --exclude app
+
+  # ── CLI binary (Windows) ──────────────────────────────────────────────
+  build-cli-windows:
+    name: build · CLI · Windows
+    needs: test-windows
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: windows-release
+      - run: cargo build -p cli --release
+      - uses: actions/upload-artifact@v4
+        with:
+          name: pingling-cli-windows-x86_64
+          path: target/release/pingling.exe
+          if-no-files-found: error
+
+  # ── Tauri app (Windows .msi + .exe with tray) ─────────────────────────
+  build-app-windows:
+    name: build · App · Windows
+    needs: test-windows
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: windows-release
+
+      - name: Stage sing-box sidecar
+        shell: bash
+        run: |
+          set -eu
+          curl -sSLf "https://github.com/SagerNet/sing-box/releases/download/v${SINGBOX_VERSION}/sing-box-${SINGBOX_VERSION}-windows-amd64.zip" -o /tmp/sb.zip
+          mkdir -p /tmp/sb app/binaries
+          unzip -q /tmp/sb.zip -d /tmp/sb
+          cp "/tmp/sb/sing-box-${SINGBOX_VERSION}-windows-amd64/sing-box.exe" "app/binaries/sing-box-x86_64-pc-windows-msvc.exe"
+
+      - name: Install tauri-cli
+        shell: bash
+        run: |
+          if ! command -v cargo-tauri >/dev/null 2>&1; then
+            cargo install tauri-cli --version "^2" --locked
+          fi
+
+      - name: Build Tauri app (unsigned .msi + .exe installer)
+        working-directory: app
+        run: cargo tauri build
+
+      - name: Upload Tauri app artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: pingling-app-windows-x86_64
+          path: |
+            target/release/bundle/msi/*.msi
+            target/release/bundle/nsis/*.exe
+          if-no-files-found: warn

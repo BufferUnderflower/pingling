@@ -1,0 +1,24 @@
+[package]
+name = "cli"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "pingling"
+path = "src/main.rs"
+
+[dependencies]
+clap = { version = "4", features = ["derive"] }
+domain = { path = "../domain" }
+data = { path = "../data", default-features = false }
+util = { path = "../util" }
+app-config = { path = "../config" }
+core-singbox-standalone = { path = "../core-singbox-standalone" }
+core-mock = { path = "../core-mock", optional = true }
+service = { path = "../service" }
+log = "0.4"
+env_logger = { version = "0.11", default-features = false, features = ["auto-color"] }
+
+[features]
+default = ["mock"]
+mock = ["core-mock"]

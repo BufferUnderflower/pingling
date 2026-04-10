@@ -1,0 +1,26 @@
+[workspace]
+resolver = "2"
+members = [
+    "app",
+    "cli",
+    "config",
+    "core-mock",
+    "core-singbox-standalone",
+    "core-libbox-windows",
+    "data",
+    "domain",
+    "ipc-server",
+    "pingle-config-pipeline",
+    "pingle-netwatch",
+    "pingle-pipeline-plugin",
+    "plugin-extism",
+    "proxy-dto",
+    "service",
+    "util",
+]
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
+strip = "debuginfo"
+panic = "abort"

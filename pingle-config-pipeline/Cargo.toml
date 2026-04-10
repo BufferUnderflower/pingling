@@ -1,0 +1,22 @@
+[package]
+name = "pingle-config-pipeline"
+version = "0.1.0"
+edition = "2021"
+description = "Native config processor pipeline + strategy/retry types for the pingle daemon"
+
+[lib]
+name = "pingle_config_pipeline"
+crate-type = ["rlib"]
+
+[dependencies]
+domain = { path = "../domain" }
+log = "0.4"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+ureq = { version = "2", features = ["json"] }
+sha2 = "0.10"
+hex = "0.4"
+
+[dev-dependencies]
+mockito = "1"
+tempfile = "3"

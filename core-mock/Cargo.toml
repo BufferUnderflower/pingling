@@ -1,0 +1,9 @@
+[package]
+name = "core-mock"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+domain = { path = "../domain" }
+util = { path = "../util" }
+log = "0.4"

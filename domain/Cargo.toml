@@ -1,0 +1,11 @@
+[package]
+name = "domain"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+# `Plugin::handle_ipc` shuttles `serde_json::Value` between the daemon
+# IPC layer and the plugin adapter. The domain crate intentionally
+# stays free of any other external dep — no async runtime, no Tauri,
+# no proxy DTOs.
+serde_json = "1"

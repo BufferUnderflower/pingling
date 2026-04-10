@@ -1,0 +1,28 @@
+[package]
+name = "plugin_mock"
+version = "0.0.0"
+edition = "2021"
+publish = false
+description = "Test fixture: minimal extism wasm plugin implementing the pingle Plugin contract with canned data"
+
+# Independent workspace so this crate doesn't try to merge into the
+# parent pingle workspace (the parent excludes us, but cargo also needs
+# us to be a self-contained package for `cargo build` to work from this
+# directory).
+[workspace]
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+extism-pdk = "1"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+[profile.release]
+# Smaller wasm output. The fixture is loaded as bytes by the test, so
+# binary size matters more than build time.
+opt-level = "z"
+lto = true
+codegen-units = 1
+strip = true

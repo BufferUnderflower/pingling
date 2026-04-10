@@ -1,0 +1,42 @@
+proxy-dto
+=========
+
+This crate contains proxy outbound struct definitions derived from
+clash-rs (https://github.com/Watfaq/clash-rs), specifically from
+`clash-lib/src/config/internal/proxy.rs` at commit master / April 2026.
+
+clash-rs is licensed under the Apache License, Version 2.0.
+Copyright (c) 2022-2026 Watfaq contributors.
+  https://github.com/Watfaq/clash-rs/blob/master/LICENSE
+
+Derivative changes made in this crate:
+  - Renamed the top-level enum from `OutboundProxyProtocol` to
+    `PingleOutbound` to avoid confusion with clash's own dispatcher.
+  - Removed the `OutboundProxy` / `OutboundGroupProtocol` wrapper
+    layer — the Pingle daemon has its own selector / group abstraction
+    in `service::VpnManager`.
+  - Removed hard dependencies on `uuid::Uuid`, `totp_rs`,
+    `shadowquic::config::CongestionControl`. TUIC uuid becomes a
+    plain `String` (validated by the core's native translator);
+    Totp / ShadowQuic / Ssh variants are dropped entirely because
+    Pingle does not target them.
+  - Added `ToSingBoxJson`, `ToXrayJson`, `ToClashYaml` projection
+    traits in `src/project.rs` that render the same struct into
+    each core's native config format. This is the whole point of
+    the crate — plugins return these structs and the daemon's
+    active VpnCore picks which projection to emit.
+  - All serde rename / alias attributes are preserved verbatim from
+    clash-rs so mihomo-dialect YAML from any panel
+    (3x-ui / marzban / marzneshin / bpb / happ-panel) parses without
+    additional translation.
+
+The field name consensus (mihomo dialect) is also documented in:
+  - https://github.com/MetaCubeX/mihomo/tree/Alpha/adapter/outbound
+  - http://wiki.metacubex.one/en/config/proxies/
+  - https://github.com/SagerNet/sing-box/tree/dev-next/option
+    (for the counterpart sing-box field names used by
+    `ToSingBoxJson`)
+
+No code from mihomo (Go) is vendored. Only the field name
+convention is borrowed via clash-rs, which itself is a Rust port of
+the same convention.

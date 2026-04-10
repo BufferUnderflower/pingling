@@ -1,0 +1,8 @@
+/target
+**/*.rs.bk
+.DS_Store
+/.idea
+/.vscode
+app/binaries/
+!/app/dist/
+!/app/dist/**

@@ -1,0 +1,164 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>pingling</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Text', sans-serif;
+      background: #1a1a2e;
+      color: #e0e0e0;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      height: 100vh;
+      user-select: none;
+      padding: 24px;
+    }
+    .logo {
+      font-size: 2rem;
+      font-weight: 700;
+      color: #fff;
+      margin-bottom: 4px;
+      letter-spacing: -0.5px;
+    }
+    .version {
+      font-size: 0.8rem;
+      color: #666;
+      margin-bottom: 20px;
+    }
+    .card {
+      background: #2d2d44;
+      border-radius: 10px;
+      padding: 16px 20px;
+      width: 100%;
+      margin-bottom: 12px;
+    }
+    .card-title {
+      font-size: 0.7rem;
+      text-transform: uppercase;
+      letter-spacing: 1px;
+      color: #888;
+      margin-bottom: 8px;
+    }
+    .status-row {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+    .status-text { font-size: 1rem; font-weight: 500; }
+    .dot {
+      width: 10px; height: 10px;
+      border-radius: 50%;
+      display: inline-block;
+      margin-right: 8px;
+    }
+    .dot.disconnected { background: #666; }
+    .dot.connected { background: #4ade80; box-shadow: 0 0 6px #4ade8088; }
+    .dot.connecting { background: #facc15; box-shadow: 0 0 6px #facc1588; }
+    .dot.error { background: #f87171; }
+    .detail { font-size: 0.82rem; color: #999; margin-top: 6px; }
+    .actions { display: flex; gap: 8px; width: 100%; }
+    button {
+      flex: 1;
+      padding: 10px;
+      border: none;
+      border-radius: 8px;
+      font-size: 0.85rem;
+      font-weight: 600;
+      cursor: pointer;
+      transition: opacity 0.15s;
+    }
+    button:hover { opacity: 0.85; }
+    .btn-on { background: #4ade80; color: #111; }
+    .btn-off { background: #f87171; color: #111; }
+    .btn-rst { background: #60a5fa; color: #111; }
+    button:disabled { opacity: 0.4; cursor: default; }
+  </style>
+</head>
+<body>
+  <div class="logo">pingling</div>
+  <div class="version" id="app-version">v0.1.0</div>
+
+  <div class="card">
+    <div class="card-title">Connection</div>
+    <div class="status-row">
+      <span class="status-text">
+        <span class="dot disconnected" id="dot"></span>
+        <span id="status">disconnected</span>
+      </span>
+    </div>
+    <div class="detail" id="core-info"></div>
+  </div>
+
+  <div class="card">
+    <div class="card-title">Config</div>
+    <div class="detail" id="config-info">loading…</div>
+  </div>
+
+  <div class="actions">
+    <button class="btn-on" id="btn-connect" onclick="do_connect()">Connect</button>
+    <button class="btn-off" id="btn-disconnect" onclick="do_disconnect()" disabled>Disconnect</button>
+    <button class="btn-rst" onclick="do_restart()">Restart</button>
+  </div>
+
+  <script>
+    const { invoke } = window.__TAURI__.core;
+    let busy = false;
+
+    function set_status(s) {
+      const cls = s.split(':')[0].trim().split(' ')[0];
+      document.getElementById('status').textContent = s;
+      const dot = document.getElementById('dot');
+      dot.className = 'dot ' + cls;
+      document.getElementById('btn-connect').disabled = (cls === 'connected' || busy);
+      document.getElementById('btn-disconnect').disabled = (cls !== 'connected' || busy);
+    }
+
+    async function refresh() {
+      try {
+        const s = await invoke('vpn_status');
+        set_status(s);
+        const cores = await invoke('core_list');
+        const active = await invoke('core_active');
+        const info = cores.find(c => c.core_type === active);
+        if (info) {
+          document.getElementById('core-info').textContent =
+            `${info.display_name} · ${info.source}${info.binary_path ? ' · ' + info.binary_path : ''}`;
+        }
+        const cfg = await invoke('config_info');
+        document.getElementById('config-info').textContent =
+          `core: ${cfg.core_type} · log: ${cfg.log_level} · ${cfg.listen_addr}`;
+      } catch (e) {
+        console.error(e);
+      }
+    }
+
+    async function do_connect() {
+      busy = true;
+      set_status('connecting…');
+      try { await invoke('vpn_connect'); } catch (e) { alert(e); }
+      busy = false;
+      refresh();
+    }
+    async function do_disconnect() {
+      busy = true;
+      try { await invoke('vpn_disconnect'); } catch (e) { alert(e); }
+      busy = false;
+      refresh();
+    }
+    async function do_restart() {
+      busy = true;
+      set_status('connecting…');
+      try { await invoke('vpn_restart'); } catch (e) { alert(e); }
+      busy = false;
+      refresh();
+    }
+
+    refresh();
+    setInterval(refresh, 3000);
+  </script>
+</body>
+</html>

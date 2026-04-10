@@ -1,0 +1,28 @@
+[package]
+name = "core-libbox-windows"
+version = "0.1.0"
+edition = "2021"
+description = "VpnCore implementation backed by sing-box's libbox.dll on Windows, called via direct C FFI from Rust."
+
+# Only built on Windows — every other host compiles to a no-op stub
+# (`#[cfg(libbox_stub)]`). The workspace can depend on it unconditionally
+# and macOS / Linux dev machines never need a Windows toolchain.
+[lib]
+name = "core_libbox_windows"
+crate-type = ["rlib"]
+
+[dependencies]
+domain = { path = "../domain" }
+pingle-config-pipeline = { path = "../pingle-config-pipeline" }
+log = "0.4"
+serde_json = "1"
+
+[build-dependencies]
+cc = "1"
+
+[features]
+default = []
+# When set, build.rs aborts instead of falling back to the stub when the
+# libbox.dll / libbox.h artifacts are missing. Use this in CI for the
+# Windows targets.
+strict = []

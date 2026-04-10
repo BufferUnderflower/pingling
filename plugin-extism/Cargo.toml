@@ -1,0 +1,17 @@
+[package]
+name = "plugin-extism"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+domain = { path = "../domain" }
+extism = "1.21"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+log = "0.4"
+tempfile = "3"
+
+[dev-dependencies]
+# Integration tests in tests/ are separate compilation units; they
+# need domain re-imported even though the lib already depends on it.
+domain = { path = "../domain" }

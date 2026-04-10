@@ -1,0 +1,19 @@
+[package]
+name = "pingle-netwatch"
+version = "0.1.0"
+edition = "2021"
+description = "Cross-platform network interface watcher with optional plugin hook"
+
+[lib]
+name = "pingle_netwatch"
+crate-type = ["rlib"]
+
+[dependencies]
+domain = { path = "../domain" }
+log = "0.4"
+netwatcher = "0.4"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+[dev-dependencies]
+env_logger = "0.11"

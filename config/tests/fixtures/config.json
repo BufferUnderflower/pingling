@@ -1,0 +1,6 @@
+{
+  "core_type": "xray",
+  "core_binary_path": "/usr/local/bin/xray",
+  "log_level": "warn",
+  "listen_addr": "127.0.0.1:1080"
+}

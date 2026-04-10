@@ -1,0 +1,48 @@
+[package]
+name = "app"
+version = "0.1.0"
+edition = "2021"
+
+[build-dependencies]
+tauri-build = "2"
+
+[dependencies]
+tauri = { version = "2", features = ["tray-icon", "image-png"] }
+tauri-plugin-shell = "2"
+tauri-plugin-store = "2"
+tauri-plugin-dialog = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+domain = { path = "../domain" }
+data = { path = "../data", default-features = false }
+service = { path = "../service" }
+ipc-server = { path = "../ipc-server" }
+app-config = { path = "../config" }
+core-singbox-standalone = { path = "../core-singbox-standalone", optional = true }
+core-libbox-windows = { path = "../core-libbox-windows", optional = true }
+core-mock = { path = "../core-mock" }
+util = { path = "../util" }
+log = "0.4"
+env_logger = "0.11"
+libc = "0.2"
+
+# UserApi plugins are loaded at RUNTIME from .wasm files via extism —
+# see plugin-extism + docs/architecture-userapi.md. The daemon does NOT
+# compile-link any plugin code; closed-source vendor plugins are
+# distributed as .wasm artifacts dropped into a config dir, discovered
+# by main.rs at startup, and registered on VpnManager via the same
+# `set_user_api(Arc<dyn UserApi>)` slot the trait defines.
+#
+# This is a ZERO-dep change to app/ — the wasm runtime is already
+# inside the existing `plugin-extism` crate which the daemon doesn't
+# yet pull in. The next commit on this branch adds it as a non-
+# optional dep here so the discovery loop has access.
+plugin-extism = { path = "../plugin-extism" }
+
+[features]
+default = ["sing-box", "libbox-windows"]
+sing-box = ["core-singbox-standalone"]
+libbox-windows = ["core-libbox-windows"]
+
+[dev-dependencies]
+tempfile = "3"
