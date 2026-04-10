@@ -194,17 +194,24 @@ impl ConfigLoader {
     }
 
     /// Returns the default config file search paths.
+    ///
+    /// On macOS: `~/Library/Application Support/pingle/config.{yaml,json}`
+    /// On Windows: `%APPDATA%\pingle\config.{yaml,json}`
+    /// On Linux: `$XDG_CONFIG_HOME/pingle/config.{yaml,json}`, then `/etc/pingle/`
     pub fn default_search_paths() -> Vec<PathBuf> {
         let mut paths = Vec::new();
 
         if let Some(config_dir) = dirs::config_dir() {
-            let app_dir = config_dir.join("pingling");
+            let app_dir = config_dir.join("pingle");
             paths.push(app_dir.join("config.yaml"));
             paths.push(app_dir.join("config.json"));
         }
 
-        paths.push(PathBuf::from("/etc/pingling/config.yaml"));
-        paths.push(PathBuf::from("/etc/pingling/config.json"));
+        #[cfg(unix)]
+        {
+            paths.push(PathBuf::from("/etc/pingle/config.yaml"));
+            paths.push(PathBuf::from("/etc/pingle/config.json"));
+        }
 
         paths
     }
