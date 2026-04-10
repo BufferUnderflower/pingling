@@ -48,33 +48,48 @@ pub struct ServerHandle {
 pub fn start(vpn: Arc<VpnManager>) -> io::Result<ServerHandle> {
     let broadcaster = Arc::new(EventBroadcaster::new());
 
-    // ----- UDS listener (unix only, best-effort) ----------------------------
-    #[cfg(unix)]
-    let (uds_path_str, uds_started) = {
-        let uds_path = uds_socket_path();
-        let path_str = uds_path.to_string_lossy().to_string();
-        let uds_listener_result = bind_uds(&uds_path);
-        let started = match &uds_listener_result {
-            Ok(listener) => {
-                log::info!("ipc: UDS listening at {}", uds_path.display());
-                spawn_uds_loop(listener.try_clone()?, vpn.clone(), broadcaster.clone());
-                true
-            }
-            Err(e) => {
-                log::warn!("ipc: UDS bind failed at {}: {e}", uds_path.display());
-                false
-            }
-        };
-        drop(uds_listener_result);
-        (path_str, started)
+    // ----- UDS listener (best-effort) --------------------------------------
+    let uds_path = uds_socket_path();
+    let uds_path_str = uds_path.to_string_lossy().to_string();
+    let uds_listener_result = bind_uds(&uds_path);
+    let uds_started = match &uds_listener_result {
+        Ok(listener) => {
+            log::info!("ipc: UDS listening at {}", uds_path.display());
+            spawn_uds_loop(listener.try_clone()?, vpn.clone(), broadcaster.clone());
+            true
+        }
+        Err(e) => {
+            log::warn!("ipc: UDS bind failed at {}: {e}", uds_path.display());
+            false
+        }
     };
-    #[cfg(not(unix))]
-    let (uds_path_str, uds_started) = (String::new(), false);
+    drop(uds_listener_result);
 
-    // ----- TCP listener (best-effort) --------------------------------------
-    let tcp_listener = TcpListener::bind("localhost:0")?;
-    let tcp_addr = format!("localhost:{}", tcp_listener.local_addr()?.port());
-    log::info!("ipc: TCP listening at {tcp_addr}");
+    // ----- TCP listener (best-effort, multi-address) -------------------------
+    // Try binding several loopback addresses because macOS and Windows differ
+    // in what works reliably:
+    //   - macOS: 127.0.0.1 always works, localhost maps to it
+    //   - Windows 10+: localhost may resolve to ::1 (IPv6); 127.0.0.1 sometimes
+    //     times out due to Windows Firewall treating raw IPv4 differently
+    //   - Older Windows: ::1 may not be available at all
+    //
+    // We try the candidates in order and take the first that binds. The
+    // advertised address uses "localhost" so the Dart client's fallback
+    // list (localhost → 127.0.0.1 → ::1) can match whichever family the
+    // OS actually accepted.
+    let tcp_candidates = ["localhost:0", "127.0.0.1:0", "[::1]:0"];
+    let tcp_listener = tcp_candidates
+        .iter()
+        .find_map(|addr| TcpListener::bind(addr).ok())
+        .ok_or_else(|| {
+            std::io::Error::new(
+                std::io::ErrorKind::AddrNotAvailable,
+                "ipc: could not bind any loopback address for TCP",
+            )
+        })?;
+    let bound_addr = tcp_listener.local_addr()?;
+    let tcp_addr = format!("localhost:{}", bound_addr.port());
+    log::info!("ipc: TCP listening at {} (bound to {})", tcp_addr, bound_addr);
     spawn_tcp_loop(tcp_listener, vpn.clone(), broadcaster.clone());
 
     // ----- Discovery: registry file + UDP beacon ---------------------------
@@ -98,7 +113,7 @@ pub fn start(vpn: Arc<VpnManager>) -> io::Result<ServerHandle> {
 
     Ok(ServerHandle {
         broadcaster,
-        uds_path: if uds_started { Some(std::path::PathBuf::from(&uds_path_str)) } else { None },
+        uds_path: if uds_started { Some(uds_path) } else { None },
         tcp_addr: Some(tcp_addr),
     })
 }
