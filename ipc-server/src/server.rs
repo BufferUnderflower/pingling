@@ -48,22 +48,28 @@ pub struct ServerHandle {
 pub fn start(vpn: Arc<VpnManager>) -> io::Result<ServerHandle> {
     let broadcaster = Arc::new(EventBroadcaster::new());
 
-    // ----- UDS listener (best-effort) --------------------------------------
-    let uds_path = uds_socket_path();
-    let uds_path_str = uds_path.to_string_lossy().to_string();
-    let uds_listener_result = bind_uds(&uds_path);
-    let uds_started = match &uds_listener_result {
-        Ok(listener) => {
-            log::info!("ipc: UDS listening at {}", uds_path.display());
-            spawn_uds_loop(listener.try_clone()?, vpn.clone(), broadcaster.clone());
-            true
-        }
-        Err(e) => {
-            log::warn!("ipc: UDS bind failed at {}: {e}", uds_path.display());
-            false
-        }
+    // ----- UDS listener (unix only, best-effort) ----------------------------
+    #[cfg(unix)]
+    let (uds_path_str, uds_started) = {
+        let uds_path = uds_socket_path();
+        let path_str = uds_path.to_string_lossy().to_string();
+        let uds_listener_result = bind_uds(&uds_path);
+        let started = match &uds_listener_result {
+            Ok(listener) => {
+                log::info!("ipc: UDS listening at {}", uds_path.display());
+                spawn_uds_loop(listener.try_clone()?, vpn.clone(), broadcaster.clone());
+                true
+            }
+            Err(e) => {
+                log::warn!("ipc: UDS bind failed at {}: {e}", uds_path.display());
+                false
+            }
+        };
+        drop(uds_listener_result);
+        (path_str, started)
     };
-    drop(uds_listener_result);
+    #[cfg(not(unix))]
+    let (uds_path_str, uds_started) = (String::new(), false);
 
     // ----- TCP listener (best-effort) --------------------------------------
     let tcp_listener = TcpListener::bind("127.0.0.1:0")?;
@@ -92,7 +98,7 @@ pub fn start(vpn: Arc<VpnManager>) -> io::Result<ServerHandle> {
 
     Ok(ServerHandle {
         broadcaster,
-        uds_path: if uds_started { Some(uds_path) } else { None },
+        uds_path: if uds_started { Some(std::path::PathBuf::from(&uds_path_str)) } else { None },
         tcp_addr: Some(tcp_addr),
     })
 }
