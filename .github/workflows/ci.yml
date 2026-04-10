@@ -17,7 +17,8 @@ env:
   SINGBOX_VERSION: "1.11.3"
 
 jobs:
-  # ── tests ──────────────────────────────────────────────────────────────
+
+  # ── tests (all platforms) ──────────────────────────────────────────────
   test-linux:
     name: test · Linux
     runs-on: ubuntu-latest
@@ -74,6 +75,8 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           shared-key: windows-release
+          # Cache ~/.cargo/bin so tauri-cli survives across runs.
+          cache-directories: ~/.cargo/bin
 
       - name: Stage sing-box sidecar
         shell: bash
@@ -84,10 +87,14 @@ jobs:
           unzip -q /tmp/sb.zip -d /tmp/sb
           cp "/tmp/sb/sing-box-${SINGBOX_VERSION}-windows-amd64/sing-box.exe" "app/binaries/sing-box-x86_64-pc-windows-msvc.exe"
 
-      - name: Install tauri-cli
+      - name: Install tauri-cli (cached across runs)
         shell: bash
         run: |
-          if ! command -v cargo-tauri >/dev/null 2>&1; then
+          if command -v cargo-tauri >/dev/null 2>&1; then
+            echo "tauri-cli already installed (from cache)"
+            cargo tauri --version
+          else
+            echo "installing tauri-cli from crates.io..."
             cargo install tauri-cli --version "^2" --locked
           fi
 
