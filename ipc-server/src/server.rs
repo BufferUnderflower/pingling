@@ -72,8 +72,8 @@ pub fn start(vpn: Arc<VpnManager>) -> io::Result<ServerHandle> {
     let (uds_path_str, uds_started) = (String::new(), false);
 
     // ----- TCP listener (best-effort) --------------------------------------
-    let tcp_listener = TcpListener::bind("127.0.0.1:0")?;
-    let tcp_addr = tcp_listener.local_addr()?.to_string();
+    let tcp_listener = TcpListener::bind("localhost:0")?;
+    let tcp_addr = format!("localhost:{}", tcp_listener.local_addr()?.port());
     log::info!("ipc: TCP listening at {tcp_addr}");
     spawn_tcp_loop(tcp_listener, vpn.clone(), broadcaster.clone());
 
