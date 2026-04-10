@@ -168,10 +168,9 @@ impl ConfigLoader {
     /// Load from default locations + env var overrides.
     ///
     /// Search order:
-    /// 1. `$XDG_CONFIG_HOME/pingling/config.yaml`
-    /// 2. `$XDG_CONFIG_HOME/pingling/config.json`
-    /// 3. `/etc/pingling/config.yaml`
-    /// 4. `/etc/pingling/config.json`
+    /// - macOS: `~/Library/Application Support/pingle/config.{yaml,json}`
+    /// - Windows: `%APPDATA%\pingle\config.{yaml,json}`
+    /// - Linux: `$XDG_CONFIG_HOME/pingle/config.{yaml,json}`, then `/etc/pingle/`
     ///
     /// Falls back to defaults + env if no file found.
     pub fn from_env() -> Result<PinglingConfig, String> {
@@ -429,10 +428,14 @@ auto_connect: true
 
     #[test]
     #[serial]
-    fn search_paths_contain_xdg_and_etc() {
+    fn search_paths_are_non_empty() {
         let paths = ConfigLoader::default_search_paths();
         assert!(!paths.is_empty());
+        // On unix, /etc/pingle/ should be in the list.
+        #[cfg(unix)]
         assert!(paths.iter().any(|p| p.starts_with("/etc/")));
+        // On all platforms, at least one path should contain "pingle".
+        assert!(paths.iter().any(|p| p.to_string_lossy().contains("pingle")));
     }
 
     #[test]
