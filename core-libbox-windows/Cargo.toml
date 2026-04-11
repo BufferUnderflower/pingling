@@ -17,9 +17,6 @@ core-config-processor = { path = "../core-config-processor" }
 log = "0.4"
 serde_json = "1"
 
-[build-dependencies]
-cc = "1"
-
 [features]
 default = []
 # When set, build.rs aborts instead of falling back to the stub when the

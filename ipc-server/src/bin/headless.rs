@@ -54,6 +54,34 @@ fn main() {
         },
         Box::new(core_mock::MockCore::new()),
     );
+
+    // libbox (Windows) — registered only when the binary was built
+    // with `--features libbox-windows`. Stays present on non-Windows
+    // hosts too (the core-libbox-windows crate is a no-op stub there),
+    // but reports PrerequisiteMissing until Windows + a real libbox.dll.
+    // Calling libbox.Version() proves the linker resolved the DLL
+    // symbols end-to-end: stub mode returns null, linked mode returns
+    // "sing-box-<version>".
+    #[cfg(feature = "libbox-windows")]
+    {
+        use domain::VpnCore;
+        let core = core_libbox_windows::LibboxCoreWindows::new();
+        let info = core.info();
+        log::info!(
+            "headless: libbox core registered, reports version = {:?}",
+            info.version
+        );
+        registry.register(
+            domain::CoreDescriptor {
+                core_type: "libbox".into(),
+                display_name: "libbox (Windows)".into(),
+                source: domain::CoreSource::Linked("libbox.dll".into()),
+                binary_path: None,
+                available: true,
+            },
+            Box::new(core),
+        );
+    }
     let storage: Box<dyn domain::SettingsStorage> = Box::new(data::MemorySettingsStorage::new());
     // Pre-seed a config_path so vpn.connect() doesn't fail on InvalidConfiguration.
     let mut storage = storage;

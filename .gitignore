@@ -3,6 +3,10 @@ node_modules
 ./node_modules/**
 node_modules/
 app/binaries/
+# libbox.dll + libbox.h + libbox.dll.a (GNU) / libbox.lib (MSVC) are
+# staged here by CI (or by a developer doing a Windows-targeting build)
+# before cargo build. They never get committed.
+core-libbox-windows/frameworks/
 dist/
 # …except the Tauri app's hand-written static frontend. It's not built,
 # it's source code that happens to live in a directory named `dist/`.

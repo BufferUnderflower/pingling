@@ -21,6 +21,24 @@ headless = [
     "dep:env_logger",
     "dep:plugin-extism",
 ]
+# Opt-in: link + register the LibboxCoreWindows driver into the
+# headless binary. Implies `headless`. On non-Windows hosts the
+# core-libbox-windows crate compiles to a stub (cfg(libbox_stub))
+# that always reports PrerequisiteMissing, so the feature stays
+# portable for workspace-wide builds. Enabled by CI for the
+# daemon-v* Windows bundle so the real libbox.dll is linked in.
+libbox-windows = [
+    "headless",
+    "dep:core-libbox-windows",
+]
+# Forwards to core-libbox-windows' strict mode — a missing libbox.dll
+# becomes a hard build failure instead of silently compiling the stub.
+# Used by CI for the daemon-v* Windows bundle so a stale/missing DLL
+# never slips through.
+libbox-windows-strict = [
+    "libbox-windows",
+    "core-libbox-windows/strict",
+]
 
 [dependencies]
 domain = { path = "../domain" }
@@ -38,6 +56,10 @@ core-mock = { path = "../core-mock", optional = true }
 data = { path = "../data", default-features = false, optional = true }
 env_logger = { version = "0.11", optional = true }
 plugin-extism = { path = "../plugin-extism", optional = true }
+# Only linked when the `libbox-windows` feature is on. Unconditional
+# path = .. keeps resolver happy in the workspace; it's just never
+# compiled unless the feature gate brings it in.
+core-libbox-windows = { path = "../core-libbox-windows", optional = true }
 
 [dev-dependencies]
 core-mock = { path = "../core-mock" }
