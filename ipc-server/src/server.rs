@@ -48,22 +48,27 @@ pub struct ServerHandle {
 pub fn start(vpn: Arc<VpnManager>) -> io::Result<ServerHandle> {
     let broadcaster = Arc::new(EventBroadcaster::new());
 
-    // ----- UDS listener (best-effort) --------------------------------------
-    let uds_path = uds_socket_path();
-    let uds_path_str = uds_path.to_string_lossy().to_string();
-    let uds_listener_result = bind_uds(&uds_path);
-    let uds_started = match &uds_listener_result {
-        Ok(listener) => {
-            log::info!("ipc: UDS listening at {}", uds_path.display());
-            spawn_uds_loop(listener.try_clone()?, vpn.clone(), broadcaster.clone());
-            true
-        }
-        Err(e) => {
-            log::warn!("ipc: UDS bind failed at {}: {e}", uds_path.display());
-            false
-        }
+    // ----- UDS listener (best-effort, unix-only) ---------------------------
+    #[cfg(unix)]
+    let (uds_path, uds_path_str, uds_started) = {
+        let uds_path = uds_socket_path();
+        let uds_path_str = uds_path.to_string_lossy().to_string();
+        let started = match bind_uds(&uds_path) {
+            Ok(listener) => {
+                log::info!("ipc: UDS listening at {}", uds_path.display());
+                spawn_uds_loop(listener, vpn.clone(), broadcaster.clone());
+                true
+            }
+            Err(e) => {
+                log::warn!("ipc: UDS bind failed at {}: {e}", uds_path.display());
+                false
+            }
+        };
+        (uds_path, uds_path_str, started)
     };
-    drop(uds_listener_result);
+    #[cfg(not(unix))]
+    let (uds_path, uds_path_str, uds_started): (PathBuf, String, bool) =
+        (PathBuf::new(), String::new(), false);
 
     // ----- TCP listener (best-effort, multi-address) -------------------------
     // Try binding several loopback addresses because macOS and Windows differ
@@ -130,12 +135,6 @@ fn uds_socket_path() -> PathBuf {
     std::env::temp_dir().join("pingle.sock")
 }
 
-#[cfg(not(unix))]
-fn uds_socket_path() -> PathBuf {
-    // Windows: returned but never bound. Server will skip UDS gracefully.
-    PathBuf::from("pingle.sock")
-}
-
 #[cfg(unix)]
 fn bind_uds(path: &PathBuf) -> io::Result<UnixListener> {
     // Stale socket left over from a previous run blocks new bind. Removing
@@ -143,14 +142,6 @@ fn bind_uds(path: &PathBuf) -> io::Result<UnixListener> {
     // window only if two daemons race to start, which we accept.
     let _ = std::fs::remove_file(path);
     UnixListener::bind(path)
-}
-
-#[cfg(not(unix))]
-fn bind_uds(_path: &PathBuf) -> io::Result<TcpListener> {
-    Err(io::Error::new(
-        io::ErrorKind::Unsupported,
-        "UDS not supported on this platform",
-    ))
 }
 
 // ---------------------------------------------------------------------------
