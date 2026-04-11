@@ -165,6 +165,46 @@ wire version X for slot Y") rather than silently reinterpret
 fields. Wire versions are independent per slot so one slot can
 migrate to v2 without affecting others.
 
+## Plugin participation matrix
+
+Known plugins in the pingle ecosystem and which slot phases each
+claims. "all ucg" means the plugin claims every phase with
+`SlotOutcome::Unchanged` (pure observer, chain continues with same
+payload). "exec real" means the plugin's exec phase runs real logic
+and returns Continue/Halt/Error; other phases are Unchanged.
+
+| Slot                  | `pingle-plugin-passthrough` | `pingle-plugin-hub-userapi` |
+|-----------------------|-----------------------------|-----------------------------|
+| `config.process`      | all ucg                     | unhandled                   |
+| `deeplink.resolve`    | all ucg                     | **exec real**, before/after ucg |
+| `auth.session`        | all ucg                     | unhandled (flat `auth.session` handler still works) |
+| `vpn.connect`         | all ucg                     | all ucg                     |
+| `vpn.disconnect`      | all ucg                     | all ucg                     |
+| `ipc.dispatch`        | all ucg                     | all ucg                     |
+| `core.start`          | all ucg                     | unhandled                   |
+| `core.stop`           | all ucg                     | unhandled                   |
+| `profile.activate`    | all ucg                     | unhandled                   |
+| `profile.persist`     | all ucg                     | unhandled                   |
+| `daemon.startup`      | all ucg                     | unhandled                   |
+| `daemon.shutdown`     | all ucg                     | unhandled                   |
+| `outbound.select`     | all ucg                     | unhandled                   |
+| `outbound.test_latency` | all ucg                   | unhandled                   |
+| `plugin.load`         | unhandled                   | unhandled                   |
+
+Both plugins live in the private `pingle-daemon` repo under
+`wasm/`. Their source lives in standalone cargo workspaces so they
+don't pull extism-pdk into the host-side build; the passthrough
+tests its routing directly, the hub-userapi splits `dispatch.rs`
+(pure Rust, host-testable) from `wasm_impl.rs` (gated behind
+`cfg(target_arch = "wasm32")`) and injects its HTTP-backed
+`handle_deeplink_resolve` into `dispatch::dispatch_slot` as an
+`FnOnce` closure so the test binary can stub it out.
+
+**Adding a new plugin**: drop a new `wasm/<name>/` crate into
+`pingle-daemon`, add it to the `build:wasm-plugins` CI job (one
+`cd + cargo build + cp` block), and the bundle job picks it up
+automatically (`cp artifacts/plugins/*.wasm`).
+
 ## Related reading
 
 - [`architecture-plugin.md`](architecture-plugin.md) — public/private
