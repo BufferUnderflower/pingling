@@ -265,40 +265,109 @@ pub fn builtin_resolve(req: &DeeplinkRequest) -> DeeplinkResolution {
 // Plugin resolver
 // ---------------------------------------------------------------------------
 
+/// Payload exchanged with the plugin over the `deeplink.resolve`
+/// slot chain. Carried inside [`domain::SlotContext::payload`] for
+/// each phase (`before`, `exec`, `after`) and returned inside any
+/// [`domain::SlotOutcome::Continue`] / [`domain::SlotOutcome::Halt`].
+///
+/// `resolution` starts `None` from the host and is filled in by
+/// whichever plugin phase decides to own the deeplink — typically
+/// `exec`. `before` plugins can mutate `request` (e.g. rewrite a
+/// legacy query string into a new shape); `after` plugins can
+/// observe the final resolution for telemetry or persist stats.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DeeplinkResolvePayload {
+    /// Original deeplink request, parsed from the pingle:// URL.
+    pub request: DeeplinkRequest,
+    /// Stable daemon install id — lets plugins match a deeplink
+    /// against a specific installation (e.g. a login token generated
+    /// for this device).
+    pub install_id: String,
+    /// Current platform: `"windows"`, `"macos"`, `"linux"`, ...
+    /// Plugins that emit platform-specific imports use this.
+    pub platform: String,
+    /// Resolution chosen by a phase (initially `None`). If a phase
+    /// returns `Continue { payload }` with this field populated, the
+    /// host uses it as the deeplink outcome after the chain completes.
+    pub resolution: Option<DeeplinkResolution>,
+}
+
 /// Ask the loaded plugin (if any) to resolve the URL.
 ///
-/// Calls `plugin.handle_ipc("deeplink.resolve", ...)` and parses the
-/// result as a [`DeeplinkResolution`]. Any plugin error is converted
-/// to [`DeeplinkResolution::Unhandled`] so the built-in resolver gets
-/// a chance — plugins should NEVER break the deeplink path.
+/// Dispatches through the canonical [`domain::slot_names::DEEPLINK_RESOLVE`]
+/// slot chain first. If no phase of the chain claims the slot, falls
+/// back to the legacy flat `deeplink.resolve` method name for plugins
+/// that haven't yet adopted the slot convention. Any plugin error
+/// (wire, serde, or explicit) is converted to
+/// [`DeeplinkResolution::Unhandled`] so the built-in resolver gets a
+/// chance — plugins should NEVER break the deeplink path.
 pub fn plugin_resolve(
     vpn: &VpnManager,
     req: &DeeplinkRequest,
 ) -> Option<DeeplinkResolution> {
     let plugin = vpn.plugin()?;
     let install_id = vpn.install_id().unwrap_or_default();
-    let input = serde_json::json!({
+
+    // Try the slot-chain convention first.
+    let payload = DeeplinkResolvePayload {
+        request: req.clone(),
+        install_id: install_id.clone(),
+        platform: std::env::consts::OS.to_string(),
+        resolution: None,
+    };
+    let invocation_id = domain::new_invocation_id();
+    match domain::run_slot_chain(
+        plugin.as_ref(),
+        domain::slot_names::DEEPLINK_RESOLVE,
+        DEEPLINK_WIRE_VERSION,
+        &invocation_id,
+        payload,
+    ) {
+        Ok(Some(final_payload)) => {
+            // Chain handled it. The plugin either filled `resolution`
+            // in one of the phases, or left it `None` (observed but
+            // didn't claim) — treat the latter as Unhandled so the
+            // builtin resolver picks up.
+            return Some(
+                final_payload
+                    .resolution
+                    .unwrap_or(DeeplinkResolution::Unhandled),
+            );
+        }
+        Err(e) => {
+            log::warn!("plugin deeplink.resolve slot chain errored: {e}");
+            return Some(DeeplinkResolution::Unhandled);
+        }
+        Ok(None) => {
+            // Fall through to legacy dispatch below. Covers
+            // pre-slot plugins still in the field.
+        }
+    }
+
+    // Legacy fallback: single-method dispatch with the pre-slot wire
+    // shape. Dropped once every plugin has migrated.
+    let legacy_input = serde_json::json!({
         "wire_version": DEEPLINK_WIRE_VERSION,
         "request": req,
         "install_id": install_id,
         "platform": std::env::consts::OS,
     });
-    match plugin.handle_ipc("deeplink.resolve", &input) {
+    match plugin.handle_ipc("deeplink.resolve", &legacy_input) {
         Some(Ok(value)) => match serde_json::from_value::<DeeplinkResolution>(value.clone()) {
             Ok(res) => Some(res),
             Err(e) => {
                 log::warn!(
-                    "plugin deeplink.resolve returned unparseable value: {e} (raw: {value})"
+                    "plugin deeplink.resolve (legacy) returned unparseable value: {e} (raw: {value})"
                 );
                 Some(DeeplinkResolution::Unhandled)
             }
         },
         Some(Err(e)) => {
-            log::warn!("plugin deeplink.resolve errored: {e}");
+            log::warn!("plugin deeplink.resolve (legacy) errored: {e}");
             Some(DeeplinkResolution::Unhandled)
         }
         None => {
-            log::debug!("plugin does not claim deeplink.resolve");
+            log::debug!("plugin does not claim deeplink.resolve (slot chain or legacy)");
             None
         }
     }

@@ -34,8 +34,9 @@ pub use errors::VpnError;
 pub use ops::*;
 pub use pipeline::{FnHook, FnWrapHook, Handler, Hook, Operation, Pipeline, WrapHook};
 pub use traits::{
-    Authenticator, InstallIdProvider, Plugin, Profile, ProfileMeta, ProfileSource, ProfileStorage,
-    SettingsStorage, TempConfigPath, VpnCore,
+    new_invocation_id, phase, plugin_slot, run_slot_chain, slot_names, Authenticator,
+    InstallIdProvider, Plugin, Profile, ProfileMeta, ProfileSource, ProfileStorage,
+    SettingsStorage, SlotChainResult, SlotContext, SlotOutcome, TempConfigPath, VpnCore,
 };
 pub use types::{
     ConnectionInfo, ConnectionState, CoreDescriptor, CoreEvent, CoreInfo, CoreSource, Outbound,

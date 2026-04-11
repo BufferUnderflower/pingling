@@ -177,3 +177,119 @@ fn plugin_adapter_round_trips_handle_ipc_against_real_wasm() {
     assert!(auth.is_authenticated());
     assert_eq!(auth.user_id().as_deref(), Some("mock-1"));
 }
+
+/// Exercises the middleware-style slot chain convention end-to-end
+/// against a real wasm module. The mock fixture exposes several demo
+/// slots (see its module doc) covering every SlotOutcome variant:
+/// unchanged, continue, halt, error, unhandled.
+#[test]
+fn plugin_adapter_walks_slot_chain_against_real_wasm() {
+    if !wasm32_target_installed() {
+        eprintln!(
+            "SKIP: wasm32-unknown-unknown target not installed. \
+             Run `rustup target add wasm32-unknown-unknown` to enable this test."
+        );
+        return;
+    }
+    let Some(wasm_path) = build_fixture() else {
+        eprintln!("SKIP: fixture build failed (see above)");
+        return;
+    };
+
+    let plugin = PluginAdapter::load(&wasm_path, vec![])
+        .expect("PluginAdapter::load on the mock fixture should succeed");
+
+    // --- slot claimed in before+after only (pure observer) ---------
+    // The mock fixture claims `slot.demo.observe.before` and
+    // `slot.demo.observe.after` with `Unchanged`. `exec` returns
+    // Unhandled because there's no handler for it in the mock's
+    // dispatch_slot_phase. Result: run_slot_chain returns Some
+    // with the input payload unchanged.
+    #[derive(Clone, serde::Serialize, serde::Deserialize, Debug, PartialEq)]
+    struct Counter {
+        bump: u32,
+    }
+    let result = domain::run_slot_chain(
+        plugin.as_ref(),
+        "demo.observe",
+        1,
+        "t1",
+        Counter { bump: 5 },
+    )
+    .expect("slot chain ok");
+    assert_eq!(
+        result,
+        Some(Counter { bump: 5 }),
+        "pure-observer slots must return the original payload unchanged"
+    );
+
+    // --- slot that transforms the payload via exec::Continue -------
+    let result = domain::run_slot_chain(
+        plugin.as_ref(),
+        "demo.transform",
+        1,
+        "t2",
+        Counter { bump: 10 },
+    )
+    .expect("slot chain ok");
+    assert_eq!(
+        result,
+        Some(Counter { bump: 11 }),
+        "transform slot's exec phase must increment the counter"
+    );
+
+    // --- slot that halts in before — exec+after must be skipped ----
+    #[derive(Clone, Default, serde::Serialize, serde::Deserialize, Debug, PartialEq)]
+    struct HaltPayload {
+        #[serde(default)]
+        halted: bool,
+        #[serde(default)]
+        reason: String,
+    }
+    let result = domain::run_slot_chain(
+        plugin.as_ref(),
+        "demo.halt",
+        1,
+        "t3",
+        HaltPayload::default(),
+    )
+    .expect("slot chain ok");
+    let halted = result.expect("halt slot claimed the chain");
+    assert!(halted.halted, "halt payload's flag should be set");
+    assert!(
+        halted.reason.contains("canned halt"),
+        "halt payload should carry the plugin's reason; got {halted:?}"
+    );
+
+    // --- slot that errors in exec — chain should surface VpnError --
+    #[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
+    struct Empty {}
+    let err = domain::run_slot_chain(
+        plugin.as_ref(),
+        "demo.error",
+        1,
+        "t4",
+        Empty {},
+    )
+    .expect_err("error slot must surface as Err");
+    let msg = err.to_string();
+    assert!(
+        msg.contains("simulated slot failure"),
+        "plugin error message must propagate up the chain; got {msg}"
+    );
+
+    // --- slot nobody claims — chain returns Ok(None) ----------------
+    let result = domain::run_slot_chain(
+        plugin.as_ref(),
+        "demo.nothing",
+        1,
+        "t5",
+        Counter { bump: 1 },
+    )
+    .expect("slot chain ok");
+    assert_eq!(
+        result, None,
+        "unclaimed slot must return None so the caller can fall back"
+    );
+}
+
