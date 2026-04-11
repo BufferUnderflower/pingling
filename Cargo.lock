@@ -4899,6 +4899,7 @@ dependencies = [
  "data",
  "domain",
  "log",
+ "serde",
  "serde_json",
  "tempfile",
  "util",

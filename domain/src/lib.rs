@@ -34,9 +34,18 @@ pub use errors::VpnError;
 pub use ops::*;
 pub use pipeline::{FnHook, FnWrapHook, Handler, Hook, Operation, Pipeline, WrapHook};
 pub use traits::{
-    new_invocation_id, phase, plugin_slot, run_slot_chain, slot_names, Authenticator,
-    InstallIdProvider, Plugin, Profile, ProfileMeta, ProfileSource, ProfileStorage,
-    SettingsStorage, SlotChainResult, SlotContext, SlotOutcome, TempConfigPath, VpnCore,
+    new_invocation_id, phase, plugin_slot, plugin_slot_payloads, run_slot_chain,
+    run_slot_chain_observed, slot_names, Authenticator, ConnectResult, CoreLifecycleResult,
+    CoreStartPayload, CoreStopPayload, DaemonShutdownPayload, DaemonStartupPayload,
+    DisconnectResult, InstallIdProvider, IpcDispatchOutcome, IpcDispatchPayload, LatencyResult,
+    NullSlotObserver, OutboundSelectPayload, OutboundTestLatencyPayload, Plugin, Profile,
+    ProfileActivatePayload, ProfileMeta, ProfilePersistPayload, ProfileSource, ProfileStorage,
+    SettingsStorage, SlotChainResult, SlotContext, SlotObservation, SlotObserver, SlotOutcome,
+    TempConfigPath, VpnConnectPayload, VpnCore, VpnDisconnectPayload,
+    CORE_START_WIRE_VERSION, CORE_STOP_WIRE_VERSION, DAEMON_SHUTDOWN_WIRE_VERSION,
+    DAEMON_STARTUP_WIRE_VERSION, IPC_DISPATCH_WIRE_VERSION, OUTBOUND_SELECT_WIRE_VERSION,
+    OUTBOUND_TEST_LATENCY_WIRE_VERSION, PROFILE_ACTIVATE_WIRE_VERSION,
+    PROFILE_PERSIST_WIRE_VERSION, VPN_CONNECT_WIRE_VERSION, VPN_DISCONNECT_WIRE_VERSION,
 };
 pub use types::{
     ConnectionInfo, ConnectionState, CoreDescriptor, CoreEvent, CoreInfo, CoreSource, Outbound,

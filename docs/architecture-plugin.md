@@ -1,6 +1,15 @@
 # Plugin architecture
 
-**Status:** implemented (2026-04-08).
+**Status:** implemented (2026-04-08), extended with the slot-chain
+middleware framework (2026-04-12 — see
+[`plugin-slots.md`](plugin-slots.md) for the current wire shape and
+canonical slot catalog). The fundamentals below still stand: one
+`Plugin` trait, one wasm runtime, plugins own their vocabulary.
+What changed: the daemon now also calls plugins in a
+`before → exec → after` chain around named extension points, on
+top of the same `handle_ipc` dispatcher documented here. New
+readers should skim this file for the *rationale*, then jump to
+`plugin-slots.md` for the wire protocol details.
 
 ## Problem
 

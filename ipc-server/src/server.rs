@@ -45,8 +45,26 @@ pub struct ServerHandle {
 ///
 /// `vpn` is the shared [`VpnManager`] — every accepted connection holds
 /// an `Arc` clone of it.
+///
+/// Convenience wrapper around [`start_with_broadcaster`] that
+/// constructs a fresh [`EventBroadcaster`] internally. Use the
+/// `_with_broadcaster` form when you need to pre-wire the broadcaster
+/// into a [`BroadcastingSlotObserver`] (or similar) *before* the
+/// server boots, so the first slot dispatches reach subscribers.
 pub fn start(vpn: Arc<VpnManager>) -> io::Result<ServerHandle> {
-    let broadcaster = Arc::new(EventBroadcaster::new());
+    start_with_broadcaster(vpn, Arc::new(EventBroadcaster::new()))
+}
+
+/// Lower-level [`start`] variant that takes an externally-constructed
+/// broadcaster. The composition root builds it, wires it into a
+/// [`BroadcastingSlotObserver`], installs the observer on the
+/// [`VpnManager`], then hands the same broadcaster to this function
+/// so subscribers see both `event.stateChanged` *and* `event.slot.*`
+/// notifications flowing out of the same channel.
+pub fn start_with_broadcaster(
+    vpn: Arc<VpnManager>,
+    broadcaster: Arc<EventBroadcaster>,
+) -> io::Result<ServerHandle> {
 
     // ----- UDS listener (best-effort, unix-only) ---------------------------
     #[cfg(unix)]
@@ -311,7 +329,69 @@ fn handle_line(
         ));
     }
 
-    methods::dispatch(vpn, broadcaster, req)
+    // slot.ipc.dispatch.* — cross-cutting hook around every JSON-RPC
+    // method call. Plugins can observe every client interaction
+    // (telemetry, audit, rate-limit) without enumerating method
+    // names. The payload's `outcome` field is `None` on before/exec
+    // and populated on after so subscribers can pair enter→outcome
+    // by `invocation_id`.
+    //
+    // If no plugin is loaded, the slot is a no-op (`run_slot`
+    // short-circuits to Ok(None)) but the observer still gets fired
+    // through `vpn.run_slot`, which means `event.slot.*` IPC
+    // notifications still go out when the BroadcastingSlotObserver
+    // is wired in — the important side effect in daemon-v0.1.3.
+    let invocation_id = domain::new_invocation_id();
+    let method_name = req.method.clone();
+    let mut slot_payload = domain::IpcDispatchPayload {
+        method: method_name.clone(),
+        params: req.params.clone(),
+        transport: None,
+        outcome: None,
+    };
+    let _ = vpn.run_slot(
+        domain::slot_names::IPC_DISPATCH,
+        domain::IPC_DISPATCH_WIRE_VERSION,
+        &invocation_id,
+        slot_payload.clone(),
+    );
+
+    let start_ts = std::time::Instant::now();
+    let response = methods::dispatch(vpn, broadcaster, req);
+    let duration_us = start_ts.elapsed().as_micros() as u64;
+
+    slot_payload.outcome = Some(match &response {
+        Some(r) if r.error.is_none() => domain::IpcDispatchOutcome {
+            ok: true,
+            error_code: None,
+            error_message: None,
+            duration_us,
+        },
+        Some(r) => domain::IpcDispatchOutcome {
+            ok: false,
+            error_code: r.error.as_ref().map(|e| e.code),
+            error_message: r.error.as_ref().map(|e| e.message.clone()),
+            duration_us,
+        },
+        None => {
+            // JSON-RPC notification (no id) — no response frame to
+            // inspect, treat as success for telemetry purposes.
+            domain::IpcDispatchOutcome {
+                ok: true,
+                error_code: None,
+                error_message: None,
+                duration_us,
+            }
+        }
+    });
+    let _ = vpn.run_slot(
+        domain::slot_names::IPC_DISPATCH,
+        domain::IPC_DISPATCH_WIRE_VERSION,
+        &invocation_id,
+        slot_payload,
+    );
+
+    response
 }
 
 // ---------------------------------------------------------------------------

@@ -89,6 +89,25 @@ fn main() {
 
     let vpn = Arc::new(service::VpnManager::new(registry, storage));
 
+    // --- Slot-chain observer wiring ----------------------------------
+    //
+    // Build a shared EventBroadcaster now so the slot observer and
+    // the IPC server share the same push channel. Any subscriber
+    // attaching to the IPC server sees both `event.stateChanged`
+    // and `event.slot.*` notifications flowing out of the same
+    // broadcaster. `PINGLING_SLOT_BROADCAST=0` turns the broadcast
+    // sink off at boot for deployments where no listener is
+    // expected; the log sink is always on at the trace level.
+    let broadcaster = Arc::new(ipc_server::EventBroadcaster::new());
+    let slot_observer = Arc::new(ipc_server::BroadcastingSlotObserver::new(broadcaster.clone()));
+    if matches!(
+        std::env::var("PINGLING_SLOT_BROADCAST").as_deref(),
+        Ok("0") | Ok("false") | Ok("off")
+    ) {
+        slot_observer.set_broadcast_enabled(false);
+    }
+    vpn.set_slot_observer(slot_observer);
+
     // Optional plugin install — only when PINGLE_PLUGIN_WASM is set.
     // The same wasm wire contract as `app/src/main.rs::discover_plugin`
     // (both go through `PluginAdapter::load`), just with the path
@@ -119,7 +138,8 @@ fn main() {
         }
     }
 
-    let handle = start(vpn).expect("ipc-server failed to start");
+    let handle = ipc_server::start_with_broadcaster(vpn, broadcaster)
+        .expect("ipc-server failed to start");
 
     // Print machine-readable connect info on a single stdout line so test
     // harnesses can pick it up without parsing logs.

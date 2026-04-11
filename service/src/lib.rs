@@ -220,6 +220,17 @@ pub struct VpnManager {
     /// trait object so tests can mock them independently.
     install_id_provider: Option<Arc<dyn InstallIdProvider>>,
 
+    /// Optional slot-chain observer. When `Some`, every slot dispatch
+    /// (`slot.vpn.connect.*`, `slot.vpn.disconnect.*`, etc.) flows
+    /// through the observer so it can log and broadcast IPC events.
+    /// When `None`, slot dispatches use [`domain::NullSlotObserver`]
+    /// internally — still functional, just silent.
+    ///
+    /// Behind a `Mutex` (not `RwLock`) because `Arc<dyn SlotObserver>`
+    /// cloning is already cheap, and the set happens once at startup
+    /// from the composition root. Read path is `.lock() → clone Arc`
+    /// which is O(1).
+    slot_observer: Mutex<Option<Arc<dyn domain::SlotObserver>>>,
 }
 
 impl VpnManager {
@@ -264,8 +275,83 @@ impl VpnManager {
             plugin: Mutex::new(None),
             profile_storage: None,
             install_id_provider: None,
+            slot_observer: Mutex::new(None),
             registry,
             storage,
+        }
+    }
+
+    /// Attach a [`domain::SlotObserver`] so slot-chain dispatches in
+    /// this manager emit observations (log lines, IPC broadcasts).
+    /// Pass `ipc_server::BroadcastingSlotObserver` at the composition
+    /// root for the standard behavior. If never called, slot chains
+    /// still execute — they just don't emit observations.
+    ///
+    /// Takes `&self` (not `self`) because the composition root
+    /// typically wraps the manager in `Arc` before the broadcaster
+    /// is available, and can't easily consume `self` afterwards.
+    pub fn set_slot_observer(&self, observer: Arc<dyn domain::SlotObserver>) {
+        let mut guard = self
+            .slot_observer
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        *guard = Some(observer);
+    }
+
+    /// Dispatch a slot chain through this manager's loaded plugin
+    /// (if any) and observer. Returns `Ok(Some(payload))` when a
+    /// phase claimed the slot, `Ok(None)` when every phase returned
+    /// Unhandled / None, and `Err(VpnError)` on plugin or serde
+    /// error. Callers use `None` to mean "default daemon behavior
+    /// applies, no plugin intervention".
+    ///
+    /// Safe to call even when no plugin is loaded — in that case the
+    /// function short-circuits and returns `Ok(None)` without any
+    /// overhead.
+    ///
+    /// `pub` because the IPC layer needs to invoke the slot chain
+    /// for `ipc.dispatch` around every JSON-RPC method call —
+    /// that happens in a sibling crate (`ipc-server`).
+    pub fn run_slot<P>(
+        &self,
+        slot: &str,
+        wire_version: u32,
+        invocation_id: &str,
+        payload: P,
+    ) -> Result<Option<P>, VpnError>
+    where
+        P: serde::Serialize + for<'de> serde::Deserialize<'de> + Clone,
+    {
+        let guard = self.plugin.lock().unwrap_or_else(|e| e.into_inner());
+        let plugin_ref = match guard.as_ref() {
+            Some(p) => p.clone(),
+            None => return Ok(None),
+        };
+        drop(guard);
+
+        let observer_guard = self
+            .slot_observer
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let observer = observer_guard.as_ref().cloned();
+        drop(observer_guard);
+
+        match observer {
+            Some(obs) => domain::run_slot_chain_observed(
+                plugin_ref.as_ref(),
+                slot,
+                wire_version,
+                invocation_id,
+                payload,
+                obs.as_ref(),
+            ),
+            None => domain::run_slot_chain(
+                plugin_ref.as_ref(),
+                slot,
+                wire_version,
+                invocation_id,
+                payload,
+            ),
         }
     }
 
@@ -527,29 +613,134 @@ impl VpnManager {
 
     pub fn connect(&self) -> Result<(), VpnError> {
         let config_path = self.get_config_path()?;
+        let core_type = self.active_core_type_str();
         let input = ConnectInput {
-            config_path,
-            core_type: self.active_core_type_str(),
+            config_path: config_path.clone(),
+            core_type: core_type.clone(),
             state: self.get_status(),
             metadata: BTreeMap::new(),
         };
-        self.connect
+
+        // slot.vpn.connect.* — middleware chain.
+        //
+        // Fires around the pipeline execution: the `before` / `exec`
+        // phases see a payload with `result: None`; the `after`
+        // phase sees one with `result: Some(ConnectResult { ... })`.
+        // A plugin that returns `Halt` from `before` short-circuits
+        // the whole connect with the halt payload (used for quota
+        // enforcement, subscription gating). If no plugin claims the
+        // slot, behavior is exactly the same as before this slot
+        // existed — the pipeline executes unchanged.
+        let invocation_id = domain::new_invocation_id();
+        let mut slot_payload = domain::VpnConnectPayload {
+            core_type: core_type.clone(),
+            config_path: Some(config_path),
+            hint: None,
+            result: None,
+        };
+        if let Some(halted) = self.run_slot(
+            domain::slot_names::VPN_CONNECT,
+            domain::VPN_CONNECT_WIRE_VERSION,
+            &invocation_id,
+            slot_payload.clone(),
+        )? {
+            slot_payload = halted;
+            // If the plugin pre-filled a result (e.g. explicit
+            // halt with a refusal), respect its decision and skip
+            // the real pipeline call.
+            if let Some(result) = slot_payload.result.as_ref() {
+                if !result.started {
+                    if let Some(msg) = result.error.clone() {
+                        return Err(VpnError::Unknown(msg));
+                    }
+                }
+            }
+        }
+
+        let start_ts = std::time::Instant::now();
+        let pipeline_result = self
+            .connect
             .lock()
             .unwrap_or_else(|e| e.into_inner())
-            .execute(input)?;
+            .execute(input);
+        let duration_ms = start_ts.elapsed().as_millis() as u64;
+
+        // Stamp the result into the slot payload and fire the after
+        // chain so observers see the outcome.
+        slot_payload.result = Some(domain::ConnectResult {
+            started: pipeline_result.is_ok(),
+            duration_ms,
+            error: pipeline_result
+                .as_ref()
+                .err()
+                .map(|e| e.to_string()),
+        });
+        // After-fire is best-effort: any plugin error here becomes a
+        // debug log, not a failure cause for the connect itself
+        // (the real connect already succeeded/failed). We intentionally
+        // don't propagate slot chain errors back up from the after
+        // phase.
+        let _ = self.run_slot(
+            domain::slot_names::VPN_CONNECT,
+            domain::VPN_CONNECT_WIRE_VERSION,
+            &invocation_id,
+            slot_payload,
+        );
+
+        pipeline_result?;
         Ok(())
     }
 
     pub fn disconnect(&self) -> Result<(), VpnError> {
+        let core_type = self.active_core_type_str();
         let input = DisconnectInput {
-            core_type: self.active_core_type_str(),
+            core_type: core_type.clone(),
             state: self.get_status(),
             metadata: BTreeMap::new(),
         };
-        self.disconnect
+
+        // slot.vpn.disconnect.* — same middleware shape as connect.
+        // The `after` phase is the natural place for session metrics
+        // flushing and token rotation.
+        let invocation_id = domain::new_invocation_id();
+        let mut slot_payload = domain::VpnDisconnectPayload {
+            core_type: core_type.clone(),
+            reason: None,
+            result: None,
+        };
+        if let Some(updated) = self.run_slot(
+            domain::slot_names::VPN_DISCONNECT,
+            domain::VPN_DISCONNECT_WIRE_VERSION,
+            &invocation_id,
+            slot_payload.clone(),
+        )? {
+            slot_payload = updated;
+        }
+
+        let start_ts = std::time::Instant::now();
+        let pipeline_result = self
+            .disconnect
             .lock()
             .unwrap_or_else(|e| e.into_inner())
-            .execute(input)?;
+            .execute(input);
+        let duration_ms = start_ts.elapsed().as_millis() as u64;
+
+        slot_payload.result = Some(domain::DisconnectResult {
+            stopped: pipeline_result.is_ok(),
+            duration_ms,
+            error: pipeline_result
+                .as_ref()
+                .err()
+                .map(|e| e.to_string()),
+        });
+        let _ = self.run_slot(
+            domain::slot_names::VPN_DISCONNECT,
+            domain::VPN_DISCONNECT_WIRE_VERSION,
+            &invocation_id,
+            slot_payload,
+        );
+
+        pipeline_result?;
         Ok(())
     }
 

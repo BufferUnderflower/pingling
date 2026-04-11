@@ -208,6 +208,64 @@ pub enum SlotOutcome<P> {
 /// the host hit a serde error while encoding/decoding the envelope.
 pub type SlotChainResult<P> = Result<Option<P>, VpnError>;
 
+/// An observation of a single slot-chain phase transition. Passed
+/// to [`SlotObserver::observe`] before and after each phase, so the
+/// observer can log, broadcast an IPC event, collect metrics, or
+/// otherwise side-effect on every slot dispatch without knowing the
+/// payload type.
+///
+/// `payload_json` is the typed payload serialized to `serde_json::Value`
+/// so the observer doesn't need to know the compile-time `P` of the
+/// caller — useful when one observer serves many slots with
+/// different payload types.
+#[derive(Debug, Clone)]
+pub struct SlotObservation<'a> {
+    /// Slot name, e.g. `"vpn.connect"`.
+    pub slot: &'a str,
+    /// Phase: `"before"`, `"exec"`, or `"after"`.
+    pub phase: &'a str,
+    /// Wire protocol version of the payload shape.
+    pub wire_version: u32,
+    /// Correlates phases of the same invocation.
+    pub invocation_id: &'a str,
+    /// Either `"enter"` (before the plugin is dispatched) or one of
+    /// `"unchanged"` / `"continue"` / `"halt"` / `"error"` /
+    /// `"unhandled"` / `"skipped"` (after, reflecting the phase's
+    /// outcome). `"skipped"` is used when `handle_ipc` returned
+    /// `None` — i.e., the plugin silently passed.
+    pub event: &'a str,
+    /// Payload at the moment of observation, serialized to JSON.
+    /// On `"enter"` this is the payload about to be sent; on
+    /// post-phase events it's the payload after the phase's effect.
+    pub payload_json: &'a serde_json::Value,
+    /// Error message when `event == "error"`; empty otherwise.
+    pub error_message: Option<&'a str>,
+}
+
+/// Optional observer attached to a slot chain. Implementations log
+/// phase transitions, broadcast IPC events for subscribers, collect
+/// metrics — anything side-effecting that shouldn't change the
+/// chain's semantics.
+///
+/// The daemon passes a single observer into
+/// [`run_slot_chain_observed`]; implementations typically fan out to
+/// multiple backends internally (broadcaster + logger + tracing).
+///
+/// Must be `Send + Sync` because the daemon shares one observer
+/// instance across every slot invocation on every worker thread.
+pub trait SlotObserver: Send + Sync {
+    fn observe(&self, observation: SlotObservation<'_>);
+}
+
+/// No-op observer used by the non-observed [`run_slot_chain`]
+/// wrapper. Kept public so callers that want "observe nothing" can
+/// pass it explicitly rather than doing an Option dance.
+pub struct NullSlotObserver;
+
+impl SlotObserver for NullSlotObserver {
+    fn observe(&self, _observation: SlotObservation<'_>) {}
+}
+
 /// Walk the `before` → `exec` → `after` phases of a slot, folding
 /// each phase's outcome into the next phase's input.
 ///
@@ -230,12 +288,41 @@ pub type SlotChainResult<P> = Result<Option<P>, VpnError>;
 /// [`VpnError::Unknown`] so the caller can propagate it through its
 /// usual error path — typically turning into a JSON-RPC
 /// `APPLICATION_ERROR` at the IPC layer.
+///
+/// For observed execution (log + broadcast + metrics), use
+/// [`run_slot_chain_observed`] instead.
 pub fn run_slot_chain<P>(
     plugin: &dyn Plugin,
     slot: &str,
     wire_version: u32,
     invocation_id: &str,
     initial_payload: P,
+) -> SlotChainResult<P>
+where
+    P: Serialize + DeserializeOwned + Clone,
+{
+    run_slot_chain_observed(
+        plugin,
+        slot,
+        wire_version,
+        invocation_id,
+        initial_payload,
+        &NullSlotObserver,
+    )
+}
+
+/// Same as [`run_slot_chain`] but invokes `observer` at entry and
+/// exit of every phase. Use this from the daemon's slot-fire helpers
+/// so each dispatch emits a log line and an IPC `event.slot.*`
+/// notification without polluting the plain chain helper with
+/// cross-cutting concerns.
+pub fn run_slot_chain_observed<P>(
+    plugin: &dyn Plugin,
+    slot: &str,
+    wire_version: u32,
+    invocation_id: &str,
+    initial_payload: P,
+    observer: &dyn SlotObserver,
 ) -> SlotChainResult<P>
 where
     P: Serialize + DeserializeOwned + Clone,
@@ -256,15 +343,50 @@ where
             VpnError::Unknown(format!("slot {slot}.{phase_name}: serialize context: {e}"))
         })?;
 
+        // Entry observation: emitted before the plugin is dispatched
+        // so observers can pair enter → outcome.
+        observer.observe(SlotObservation {
+            slot,
+            phase: phase_name,
+            wire_version,
+            invocation_id,
+            event: "enter",
+            payload_json: &ctx_value["payload"],
+            error_message: None,
+        });
+
         match plugin.handle_ipc(&method, &ctx_value) {
             // `None` — plugin didn't claim the method at all. Recover
             // the payload and move on (it's the same as the one we
             // fed in, since we cloned before the call).
-            None => continue,
+            None => {
+                observer.observe(SlotObservation {
+                    slot,
+                    phase: phase_name,
+                    wire_version,
+                    invocation_id,
+                    event: "skipped",
+                    payload_json: &ctx_value["payload"],
+                    error_message: None,
+                });
+                continue;
+            }
 
             // Explicit plugin error from handle_ipc itself (extism
             // crash, bad JSON, etc.). Surface it.
-            Some(Err(e)) => return Err(e),
+            Some(Err(e)) => {
+                let msg = e.to_string();
+                observer.observe(SlotObservation {
+                    slot,
+                    phase: phase_name,
+                    wire_version,
+                    invocation_id,
+                    event: "error",
+                    payload_json: &ctx_value["payload"],
+                    error_message: Some(&msg),
+                });
+                return Err(e);
+            }
 
             // Plugin returned a JSON blob — parse as SlotOutcome.
             Some(Ok(raw)) => {
@@ -275,14 +397,28 @@ where
                 })?;
                 match outcome {
                     SlotOutcome::Unhandled => {
-                        // Plugin explicitly opted out of this phase.
-                        // Equivalent to None, but logged separately
-                        // in telemetry if a plugin wants to track it.
+                        observer.observe(SlotObservation {
+                            slot,
+                            phase: phase_name,
+                            wire_version,
+                            invocation_id,
+                            event: "unhandled",
+                            payload_json: &ctx_value["payload"],
+                            error_message: None,
+                        });
                         continue;
                     }
                     SlotOutcome::Unchanged => {
                         any_handled = true;
-                        // Keep `payload` as-is (already cloned into ctx).
+                        observer.observe(SlotObservation {
+                            slot,
+                            phase: phase_name,
+                            wire_version,
+                            invocation_id,
+                            event: "unchanged",
+                            payload_json: &ctx_value["payload"],
+                            error_message: None,
+                        });
                         continue;
                     }
                     SlotOutcome::Continue {
@@ -290,14 +426,45 @@ where
                     } => {
                         any_handled = true;
                         payload = new_payload;
+                        // Re-serialize the new payload so observers
+                        // see the post-phase view.
+                        let new_json = serde_json::to_value(&payload).unwrap_or(serde_json::Value::Null);
+                        observer.observe(SlotObservation {
+                            slot,
+                            phase: phase_name,
+                            wire_version,
+                            invocation_id,
+                            event: "continue",
+                            payload_json: &new_json,
+                            error_message: None,
+                        });
                         continue;
                     }
                     SlotOutcome::Halt {
                         payload: final_payload,
                     } => {
+                        let final_json = serde_json::to_value(&final_payload).unwrap_or(serde_json::Value::Null);
+                        observer.observe(SlotObservation {
+                            slot,
+                            phase: phase_name,
+                            wire_version,
+                            invocation_id,
+                            event: "halt",
+                            payload_json: &final_json,
+                            error_message: None,
+                        });
                         return Ok(Some(final_payload));
                     }
                     SlotOutcome::Error { message } => {
+                        observer.observe(SlotObservation {
+                            slot,
+                            phase: phase_name,
+                            wire_version,
+                            invocation_id,
+                            event: "error",
+                            payload_json: &ctx_value["payload"],
+                            error_message: Some(&message),
+                        });
                         return Err(VpnError::Unknown(format!(
                             "slot {slot}.{phase_name}: {message}"
                         )));
