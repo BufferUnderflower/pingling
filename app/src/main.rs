@@ -89,23 +89,31 @@ fn load_config() -> PinglingConfig {
 // Plugin discovery
 // ---------------------------------------------------------------------------
 
-/// Allowed hostnames for wasm plugin HTTP calls.
+/// Default hostnames wasm plugins are allowed to reach via
+/// `extism_pdk::http::request(...)`.
 ///
-/// The extism runtime sandboxes all `extism_pdk::http::request` calls —
-/// anything not in the allowed-hosts list is rejected before the request
-/// leaves the wasm guest.
-///
-/// Sources (in priority order):
-/// 1. `PINGLE_PLUGIN_ALLOWED_HOSTS` env var (comma-separated)
-/// 2. Empty — plugin loads but cannot reach any network host.
-///    Vendors ship their own hostnames via env or config overlay.
+/// Empty by default — the OSS build has no hardcoded endpoints. Add
+/// hosts at runtime via the `PINGLE_PLUGIN_ALLOWED_HOSTS` env var
+/// (comma-separated). A plugin with no allowed host can still load,
+/// it just cannot reach any network service.
+const DEFAULT_PLUGIN_ALLOWED_HOSTS: &[&str] = &[];
+
+/// Parse the `PINGLE_PLUGIN_ALLOWED_HOSTS` env var into an allowed-hosts
+/// list. Falls back to `DEFAULT_PLUGIN_ALLOWED_HOSTS` when unset.
 fn resolve_plugin_allowed_hosts() -> Vec<String> {
     std::env::var("PINGLE_PLUGIN_ALLOWED_HOSTS")
-        .unwrap_or_default()
-        .split(',')
-        .filter(|s| !s.is_empty())
-        .map(|s| s.trim().to_string())
-        .collect()
+        .map(|s| {
+            s.split(',')
+                .map(|h| h.trim().to_string())
+                .filter(|h| !h.is_empty())
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_else(|_| {
+            DEFAULT_PLUGIN_ALLOWED_HOSTS
+                .iter()
+                .map(|s| (*s).to_string())
+                .collect()
+        })
 }
 
 /// Resolve the directory the daemon scans for `.wasm` plugins.
@@ -485,6 +493,10 @@ fn main() {
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_store::Builder::new().build())
         .plugin(tauri_plugin_dialog::init())
+        // Register the `pingle://` URL scheme so the OS routes
+        // deep-links to this process. The actual handler is wired
+        // below in the .setup() closure via `app.deep_link().on_open_url`.
+        .plugin(tauri_plugin_deep_link::init())
         .setup(|app| {
             let cfg = load_config();
 
@@ -514,7 +526,39 @@ fn main() {
                 }
             }
 
-            let vpn = Arc::new(VpnManager::new(registry, storage));
+            // -- Wire encrypted profile storage + install-id provider --
+            //
+            // The profile store is the new primary config source: when
+            // an active profile is set, the connect handler loads and
+            // decrypts it into a temp file. The legacy `config_path`
+            // setting is used only as a fallback. On first launch the
+            // store generates a 32-byte AES-GCM key in the OS keychain
+            // and a UUID install-id that plugins read via the
+            // `daemon.installId` IPC method.
+            //
+            // If keychain access fails (e.g. in some headless CI
+            // environments), we log the error and proceed without
+            // profile support — the daemon still works with the
+            // legacy flow.
+            let vpn_base = VpnManager::new(registry, storage);
+            let vpn = match data::EncryptedProfileStore::default_path() {
+                Ok(store) => {
+                    log::info!("profile store: initialized at OS config dir");
+                    let store = std::sync::Arc::new(store);
+                    Arc::new(
+                        vpn_base.with_profile_storage(
+                            store.clone() as std::sync::Arc<dyn domain::ProfileStorage>,
+                            store as std::sync::Arc<dyn domain::InstallIdProvider>,
+                        ),
+                    )
+                }
+                Err(e) => {
+                    log::warn!(
+                        "profile store: failed to initialize ({e}); running without profile support"
+                    );
+                    Arc::new(vpn_base)
+                }
+            };
 
             // -- Install the wasm plugin, if one is on disk --
             //
@@ -593,6 +637,61 @@ fn main() {
                 .expect("valid icon"),
                 ipc_broadcaster: ipc_broadcaster.clone(),
             });
+
+            // -- Register the `pingle://` URL scheme handler --
+            //
+            // tauri-plugin-deep-link delivers URLs here when the OS
+            // routes a `pingle://...` click to this process. We forward
+            // each URL to `ipc::deeplink::handle_deeplink` which parses,
+            // resolves (via plugin or built-in), and applies the result.
+            //
+            // The handler runs on a Tauri worker thread; we pass a
+            // cloned Arc<VpnManager> in via move capture so the closure
+            // has no borrow lifetime issues.
+            {
+                use tauri_plugin_deep_link::DeepLinkExt;
+                let dl_vpn = vpn.clone();
+                let dl_bc = ipc_broadcaster.clone();
+                app.deep_link().on_open_url(move |event| {
+                    let urls = event.urls();
+                    log::info!("deeplink: received {} url(s) from OS", urls.len());
+                    for url in urls {
+                        let url_str = url.to_string();
+                        log::info!("deeplink: handling {}", url_str);
+                        match ipc::deeplink::handle_deeplink(&dl_vpn, &url_str) {
+                            Ok(outcome) => {
+                                log::info!(
+                                    "deeplink: {} ({})",
+                                    outcome.kind,
+                                    outcome.message
+                                );
+                                // Push to IPC subscribers so GUI clients
+                                // can react (e.g. show a toast).
+                                if let Ok(payload) = serde_json::to_value(&outcome) {
+                                    dl_bc.publish(ipc::protocol::Notification::new(
+                                        "event.deeplinkHandled",
+                                        payload,
+                                    ));
+                                }
+                            }
+                            Err(e) => {
+                                log::error!("deeplink: handle failed: {e}");
+                            }
+                        }
+                    }
+                });
+
+                // On Linux + Windows, register the scheme at runtime so
+                // users who ran the binary directly (without the installer
+                // doing the registry write) still get deep-links routed.
+                // No-op on macOS where Info.plist handles registration.
+                #[cfg(any(target_os = "linux", all(debug_assertions, windows)))]
+                {
+                    if let Err(e) = app.deep_link().register("pingle") {
+                        log::warn!("deeplink: failed to register scheme: {e}");
+                    }
+                }
+            }
 
             // -- Background tray refresh loop --
             // Detects when the VPN process exits unexpectedly (e.g. killed

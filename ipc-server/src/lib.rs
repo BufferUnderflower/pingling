@@ -11,6 +11,7 @@
 //! both the Tauri daemon (`app`) and a headless test/CLI binary.
 
 pub mod broadcaster;
+pub mod deeplink;
 pub mod discovery;
 pub mod methods;
 pub mod protocol;

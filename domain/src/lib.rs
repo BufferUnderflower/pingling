@@ -33,7 +33,10 @@ pub mod types;
 pub use errors::VpnError;
 pub use ops::*;
 pub use pipeline::{FnHook, FnWrapHook, Handler, Hook, Operation, Pipeline, WrapHook};
-pub use traits::{Authenticator, Plugin, SettingsStorage, VpnCore};
+pub use traits::{
+    Authenticator, InstallIdProvider, Plugin, Profile, ProfileMeta, ProfileSource, ProfileStorage,
+    SettingsStorage, TempConfigPath, VpnCore,
+};
 pub use types::{
     ConnectionInfo, ConnectionState, CoreDescriptor, CoreEvent, CoreInfo, CoreSource, Outbound,
     OutboundProtocol, OutboundTransport, PrerequisiteCheck,

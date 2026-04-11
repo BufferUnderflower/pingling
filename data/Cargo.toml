@@ -10,6 +10,21 @@ serde_json = "1.0"
 tauri = { version = "2", features = [], optional = true }
 tauri-plugin-store = { version = "2", optional = true }
 
+# Profile storage: cross-platform OS keychain + AES-256-GCM envelope.
+# See domain::ProfileStorage trait + data::profile_store::EncryptedProfileStore.
+aes-gcm = "0.10"
+rand = "0.8"
+dirs = "6"
+log = "0.4"
+uuid = { version = "1", features = ["v4"] }
+
+# OS keychain wrapper. Supports macOS Keychain, Windows Credential
+# Manager, and Linux libsecret via a single API. Daemon-side only.
+keyring = { version = "3", features = ["apple-native", "windows-native", "sync-secret-service"] }
+
+[dev-dependencies]
+tempfile = "3"
+
 [features]
 default = []
 tauri-persist = ["dep:tauri", "dep:tauri-plugin-store"]

@@ -9,11 +9,13 @@
 //!   (`settings.get` / `settings.set`) so the Flutter app can read and write them.
 
 pub mod memory;
+pub mod profile_store;
 
 #[cfg(feature = "tauri-persist")]
 pub mod tauri_store;
 
 pub use memory::MemorySettingsStorage;
+pub use profile_store::EncryptedProfileStore;
 
 #[cfg(feature = "tauri-persist")]
 pub use tauri_store::TauriStoreSettings;

@@ -321,7 +321,7 @@ impl VpnCore for SingboxStandalone {
 /// Build the default strategy plan for the standalone sing-box CLI
 /// core and serialize to JSON bytes.
 pub(crate) fn default_singbox_standalone_strategy_plan_json() -> Vec<u8> {
-    use pingle_config_pipeline::strategy::{
+    use core_config_processor::strategy::{
         ConnectionStrategy, ResolverType, RetryPolicy, StackType, StrategyPlan,
     };
     use std::time::Duration;
@@ -371,8 +371,8 @@ mod tests {
     }
 
     #[test]
-    fn default_strategy_plan_round_trips_through_pingle_config_pipeline() {
-        use pingle_config_pipeline::strategy::{ResolverType, StackType, StrategyPlan};
+    fn default_strategy_plan_round_trips_through_core_config_processor() {
+        use core_config_processor::strategy::{ResolverType, StackType, StrategyPlan};
 
         let core = SingboxStandalone::new("/usr/bin/sing-box");
         let bytes = core.default_strategy_plan().expect("plan present");

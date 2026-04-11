@@ -60,6 +60,27 @@ pub mod methods {
     // Daemon meta
     pub const DAEMON_INFO: &str = "daemon.info";
     pub const DAEMON_PING: &str = "daemon.ping";
+    pub const DAEMON_INSTALL_ID: &str = "daemon.installId";
+
+    // Deep-link handler. Called by the app's deep-link receiver
+    // (tauri-plugin-deep-link on macOS/Windows) with the raw
+    // `pingle://...` URL. Also callable directly by IPC clients for
+    // testing + programmatic imports.
+    pub const DEEPLINK_HANDLE: &str = "deeplink.handle";
+
+    // Profile management — encrypted profile store. Higher-priority
+    // config source than the legacy `config_path` setting.
+    //
+    // Profiles are write-only from clients: you can `put` them, `activate`
+    // them, `delete` them, but `get` only returns metadata — the
+    // plaintext config body never leaves the daemon over IPC.
+    pub const PROFILE_LIST: &str = "profile.list";
+    pub const PROFILE_GET: &str = "profile.get";
+    pub const PROFILE_PUT: &str = "profile.put";
+    pub const PROFILE_DELETE: &str = "profile.delete";
+    pub const PROFILE_ACTIVE: &str = "profile.active";
+    pub const PROFILE_ACTIVATE: &str = "profile.activate";
+    pub const PROFILE_CLEAR_ACTIVE: &str = "profile.clearActive";
 
     // Subscription handshake (no-op — every connection is auto-subscribed)
     pub const EVENT_SUBSCRIBE: &str = "event.subscribe";
@@ -86,6 +107,15 @@ pub mod methods {
         OUTBOUNDS_TEST_LATENCY,
         DAEMON_INFO,
         DAEMON_PING,
+        DAEMON_INSTALL_ID,
+        DEEPLINK_HANDLE,
+        PROFILE_LIST,
+        PROFILE_GET,
+        PROFILE_PUT,
+        PROFILE_DELETE,
+        PROFILE_ACTIVE,
+        PROFILE_ACTIVATE,
+        PROFILE_CLEAR_ACTIVE,
         EVENT_SUBSCRIBE,
         EVENT_UNSUBSCRIBE,
     ];
@@ -99,6 +129,10 @@ pub mod events {
     pub const CORE_CHANGED: &str = "event.coreChanged";
     pub const OUTBOUND_SELECTED: &str = "event.outboundSelected";
     pub const LOG: &str = "event.log";
+    /// Emitted when any profile changes: created, updated, deleted,
+    /// or activated/deactivated. Clients refresh their profile list
+    /// in response.
+    pub const PROFILE_CHANGED: &str = "event.profileChanged";
 
     // NB: plugin-side push events (login/logout/etc.) are not declared
     // here for the same reason as plugin-side method names — the daemon
@@ -113,5 +147,6 @@ pub mod events {
         CORE_CHANGED,
         OUTBOUND_SELECTED,
         LOG,
+        PROFILE_CHANGED,
     ];
 }

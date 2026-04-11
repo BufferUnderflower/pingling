@@ -131,7 +131,7 @@ mod tests {
     use crate::protocol::{
         CoreInfo, PipelineStage as Stage, ProcessConfigAttempt, WIRE_VERSION,
     };
-    use pingle_config_pipeline::{
+    use core_config_processor::{
         ConnectionStrategy, ResolverType, RetryPolicy, StackType,
     };
     use serde_json::json;

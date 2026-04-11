@@ -1,8 +1,12 @@
 /target
-**/*.rs.bk
-.DS_Store
-/.idea
-/.vscode
+node_modules
+./node_modules/**
+node_modules/
 app/binaries/
+dist/
+# …except the Tauri app's hand-written static frontend. It's not built,
+# it's source code that happens to live in a directory named `dist/`.
+# Without this exception, CI has no frontendDist and `cargo tauri build`
+# fails with "Unable to find your web assets".
 !/app/dist/
 !/app/dist/**

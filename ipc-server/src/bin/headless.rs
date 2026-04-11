@@ -20,7 +20,7 @@
 //! Set `PINGLE_PLUGIN_WASM=/path/to/plugin.wasm` to install a wasm
 //! plugin at startup via `plugin_extism::plugin_adapter::PluginAdapter`.
 //! Allowed-hosts can be overridden via `PINGLE_PLUGIN_ALLOWED_HOSTS`
-//! (comma-separated); defaults to `panel.example.com` for the
+//! (comma-separated); defaults to `example.com` for the
 //! canonical Pingle plugin. Used by hand-driven plugin smoke tests
 //! and the Dart e2e harness.
 //!
@@ -69,7 +69,7 @@ fn main() {
     // without dropping files into the user's plugins dir.
     if let Some(wasm_path) = std::env::var_os("PINGLE_PLUGIN_WASM") {
         let allowed_hosts: Vec<String> = std::env::var("PINGLE_PLUGIN_ALLOWED_HOSTS")
-            .unwrap_or_else(|_| "panel.example.com".to_string())
+            .unwrap_or_else(|_| "example.com".to_string())
             .split(',')
             .filter(|s| !s.is_empty())
             .map(|s| s.trim().to_string())

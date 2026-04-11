@@ -25,17 +25,22 @@
 //!
 //! 3. **`ValidateBeforeStart`** — runs after content is loaded, validates
 //!    before the core handler starts the tunnel.
+//!
+//! # What this crate does NOT register
+//!
+//! - **Concrete config processors** — the public [`core_config_processor`]
+//!   crate only ships a passthrough + extism slot. Vendors add real
+//!   processors (DNS rewriting, ruleset download, routing exclusions,
+//!   stack tuning, etc.) by loading a wasm plugin that claims the
+//!   `config.process` method.
+//!
+//! - **Strategy / retry middleware** — the OSS build has no retry
+//!   orchestrator. The connect pipeline calls the core once, directly.
+//!   Vendors that want smart retry iterate via a separate wasm hook
+//!   layered on top of the connect pipeline.
 
 use crate::middleware;
 use crate::VpnManager;
-use pingle_config_pipeline::processors::{
-    ClashApiProcessor, DnsProcessor, LogProcessor, PlatformProcessor, RoutingExclusionsProcessor,
-    RulesetCache, RulesetProcessor, StackProcessor,
-};
-use pingle_config_pipeline::ProcessorPipeline;
-use pingle_pipeline_plugin::PipelinePlugin;
-use std::path::PathBuf;
-use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
 
 /// Push the standard built-in hooks onto all lifecycle pipelines.
@@ -73,54 +78,4 @@ pub fn register(mgr: &VpnManager) {
         .push_hook(Box::new(Arc::clone(&validate)));
     mgr.restart_pipeline()
         .push_hook(Box::new(Arc::clone(&validate)));
-}
-
-/// Build the default native config processor pipeline with all seven
-/// processors in the canonical order. Used by
-/// [`register_strategy_retry`] and exposed for callers that want to
-/// customize the order.
-///
-/// `cache_root` is where [`RulesetProcessor`] stores downloaded rulesets.
-/// Typically `<config-dir>/pingle/ruleset-cache` on macOS / Linux and
-/// `%APPDATA%\pingle\ruleset-cache` on Windows; the composition root
-/// chooses.
-pub fn default_processor_pipeline(cache_root: PathBuf) -> Result<ProcessorPipeline, String> {
-    let mut pipeline = ProcessorPipeline::new();
-    let cache = RulesetCache::new(cache_root)?;
-    pipeline
-        .push(Box::new(RulesetProcessor::new(cache)))
-        .push(Box::new(DnsProcessor::new()))
-        .push(Box::new(RoutingExclusionsProcessor::new()))
-        .push(Box::new(StackProcessor::new()))
-        .push(Box::new(LogProcessor::new()))
-        .push(Box::new(ClashApiProcessor::new()))
-        .push(Box::new(PlatformProcessor::new()));
-    Ok(pipeline)
-}
-
-/// Register a [`StrategyRetryWrap`](middleware::strategy_retry::StrategyRetryWrap)
-/// on the connect pipeline with the given native processor pipeline,
-/// optional pipeline plugin, and shared cancel flag.
-///
-/// Call this **after** [`register`] so the strategy retry wrap sits
-/// outside `ValidateBeforeStart` and `LoggingHook` — wraps run before
-/// the inner hook chain, so the wrap intercepts every connect attempt
-/// and only invokes validate / logging once per attempt's inner
-/// handler call.
-///
-/// The `cancel` flag is shared with the IPC disconnect path so an
-/// in-flight retry can be aborted cleanly.
-pub fn register_strategy_retry(
-    mgr: &VpnManager,
-    pipeline: ProcessorPipeline,
-    plugin: Option<Arc<dyn PipelinePlugin>>,
-    cancel: Arc<AtomicBool>,
-) {
-    let wrap = middleware::strategy_retry::StrategyRetryWrap::new(
-        mgr.registry(),
-        Arc::new(pipeline),
-        plugin,
-        cancel,
-    );
-    mgr.connect_pipeline().push_wrap(Box::new(wrap));
 }

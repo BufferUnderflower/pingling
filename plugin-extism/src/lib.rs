@@ -99,7 +99,7 @@ pub struct ExtismPlugin {
 pub struct LoadOptions {
     /// Hostnames the plugin's `extism_pdk::http::request(...)` calls
     /// are allowed to reach. Glob patterns supported by extism (e.g.
-    /// `*.example.com`). Anything not in this list returns a
+    /// `*.pingle-family.com`). Anything not in this list returns a
     /// "HTTP request to <url> is not allowed" error from the wasm
     /// runtime — by design, so a malicious plugin can't exfiltrate
     /// to attacker-controlled hosts.

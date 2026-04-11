@@ -3,7 +3,7 @@
 //!
 //! These types are deliberately sing-box-flavored (`StackType`,
 //! `ResolverType` are sing-box config concepts). They live in
-//! `pingle-config-pipeline` rather than `domain` because `domain` is
+//! `core-config-processor` rather than `domain` because `domain` is
 //! intentionally vendor-agnostic — only cores that drive sing-box
 //! benefit from this contract.
 

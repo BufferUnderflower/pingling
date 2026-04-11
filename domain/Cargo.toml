@@ -6,6 +6,10 @@ edition = "2021"
 [dependencies]
 # `Plugin::handle_ipc` shuttles `serde_json::Value` between the daemon
 # IPC layer and the plugin adapter. The domain crate intentionally
-# stays free of any other external dep — no async runtime, no Tauri,
-# no proxy DTOs.
+# stays free of heavy deps — no async runtime, no Tauri, no proxy
+# DTOs. serde is needed because Profile / ProfileMeta cross the IPC
+# boundary and are serialized by upstream crates. log is a zero-cost
+# facade, fine to add.
+serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+log = "0.4"

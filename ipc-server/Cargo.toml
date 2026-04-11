@@ -28,6 +28,12 @@ service = { path = "../service" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 log = "0.4"
+# Deep-link parsing (pingle://import?config=<base64>...) uses
+# percent-decoding for query values and base64 for inline configs.
+# Two small crates chosen over `url` (which would pull idna + a lot
+# of Unicode tables we don't need for our ASCII-only scheme).
+base64 = "0.22"
+percent-encoding = "2"
 core-mock = { path = "../core-mock", optional = true }
 data = { path = "../data", default-features = false, optional = true }
 env_logger = { version = "0.11", optional = true }

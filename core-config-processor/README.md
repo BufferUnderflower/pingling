@@ -1,4 +1,4 @@
-# pingle-config-pipeline
+# core-config-processor
 
 Native config processor pipeline + strategy iteration types for the
 pingle daemon. Direct port of the dart `singbox_config` package.

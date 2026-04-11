@@ -6,8 +6,6 @@ edition = "2021"
 [dependencies]
 domain = { path = "../domain" }
 util = { path = "../util" }
-pingle-config-pipeline = { path = "../pingle-config-pipeline" }
-pingle-pipeline-plugin = { path = "../pingle-pipeline-plugin" }
 log = "0.4"
 serde_json = "1"
 tempfile = "3"

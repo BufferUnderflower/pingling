@@ -116,12 +116,12 @@ pub trait VpnCore: Send + Sync {
     // -- strategy iteration -------------------------------------------------
 
     /// Default strategy plan for this core kind, as JSON-serialized
-    /// `pingle_config_pipeline::StrategyPlan` bytes. Cores that don't
+    /// `core_config_processor::StrategyPlan` bytes. Cores that don't
     /// benefit from strategy iteration return `None` (single-attempt,
     /// no-retry passthrough).
     ///
     /// Returned as `Vec<u8>` (not a typed `StrategyPlan`) so `domain`
-    /// stays free of any dependency on `pingle-config-pipeline` —
+    /// stays free of any dependency on `core-config-processor` —
     /// the strategy retry wrap deserializes the bytes back into a
     /// typed plan when needed.
     ///

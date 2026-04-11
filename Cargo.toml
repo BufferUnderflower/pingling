@@ -1,26 +1,28 @@
 [workspace]
 resolver = "2"
 members = [
-    "app",
-    "cli",
+    "domain",
+    "util",
+    "data",
     "config",
-    "core-mock",
+    "proxy-dto",
     "core-singbox-standalone",
     "core-libbox-windows",
-    "data",
-    "domain",
-    "ipc-server",
-    "pingle-config-pipeline",
+    "core-mock",
     "pingle-netwatch",
+    "core-config-processor",
     "pingle-pipeline-plugin",
-    "plugin-extism",
-    "proxy-dto",
     "service",
-    "util",
+    "ipc-server",
+    "plugin-extism",
+    "cli",
+    "app",
 ]
-
-[profile.release]
-lto = "thin"
-codegen-units = 1
-strip = "debuginfo"
-panic = "abort"
+# wasm test fixtures live in plugin-extism/tests/fixtures/ as their own
+# isolated cargo packages — they target wasm32-unknown-unknown which is
+# incompatible with the host workspace's resolver and would otherwise
+# break `cargo build --workspace`. The plugin-extism integration tests
+# build them on demand via std::process::Command.
+exclude = [
+    "plugin-extism/tests/fixtures/plugin_mock",
+]

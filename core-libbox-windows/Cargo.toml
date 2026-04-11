@@ -13,7 +13,7 @@ crate-type = ["rlib"]
 
 [dependencies]
 domain = { path = "../domain" }
-pingle-config-pipeline = { path = "../pingle-config-pipeline" }
+core-config-processor = { path = "../core-config-processor" }
 log = "0.4"
 serde_json = "1"
 

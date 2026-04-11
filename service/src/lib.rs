@@ -35,8 +35,9 @@ pub mod plugins;
 use domain::ops::*;
 use domain::pipeline::Pipeline;
 use domain::{
-    ConnectionState, CoreDescriptor, CoreInfo, CoreSource, Plugin, PrerequisiteCheck,
-    SettingsStorage, VpnCore, VpnError,
+    ConnectionState, CoreDescriptor, CoreInfo, CoreSource, InstallIdProvider, Plugin,
+    PrerequisiteCheck, Profile, ProfileMeta, ProfileStorage, SettingsStorage, TempConfigPath,
+    VpnCore, VpnError,
 };
 use handlers::*;
 use log::info;
@@ -204,6 +205,21 @@ pub struct VpnManager {
     /// normally. See `domain::traits::plugin` for the trait surface
     /// and `docs/architecture-plugin.md` for the rationale.
     plugin: Mutex<Option<Arc<dyn Plugin>>>,
+
+    /// Encrypted profile storage. When present, the connect handler
+    /// prefers the active profile over the legacy `config_path`
+    /// setting. When absent, the daemon falls back to legacy behavior.
+    /// This is set via [`VpnManager::with_profile_storage`] at the
+    /// composition root; the default [`VpnManager::new`] leaves it empty
+    /// so existing tests and the headless CLI keep working unchanged.
+    profile_storage: Option<Arc<dyn ProfileStorage>>,
+
+    /// Optional install-ID provider. Usually the same object that
+    /// implements [`ProfileStorage`] (the encrypted profile store reads
+    /// both entries from the same keychain), but kept as a separate
+    /// trait object so tests can mock them independently.
+    install_id_provider: Option<Arc<dyn InstallIdProvider>>,
+
 }
 
 impl VpnManager {
@@ -221,14 +237,18 @@ impl VpnManager {
     pub fn new(registry: CoreRegistry, storage: Box<dyn SettingsStorage>) -> Self {
         let registry = Arc::new(Mutex::new(registry));
         let storage = Arc::new(Mutex::new(storage));
+        let active_temp_config: Arc<Mutex<Option<TempConfigPath>>> = Arc::new(Mutex::new(None));
 
         Self {
-            connect: Mutex::new(Pipeline::new(Box::new(ConnectHandler {
-                registry: registry.clone(),
-            }))),
-            disconnect: Mutex::new(Pipeline::new(Box::new(DisconnectHandler {
-                registry: registry.clone(),
-            }))),
+            connect: Mutex::new(Pipeline::new(Box::new(ConnectHandler::new(
+                registry.clone(),
+                None,
+                active_temp_config.clone(),
+            )))),
+            disconnect: Mutex::new(Pipeline::new(Box::new(DisconnectHandler::new(
+                registry.clone(),
+                active_temp_config.clone(),
+            )))),
             restart: Mutex::new(Pipeline::new(Box::new(RestartHandler {
                 registry: registry.clone(),
             }))),
@@ -242,9 +262,40 @@ impl VpnManager {
             select_outbound: Mutex::new(None),
             test_latency: Mutex::new(None),
             plugin: Mutex::new(None),
+            profile_storage: None,
+            install_id_provider: None,
             registry,
             storage,
         }
+    }
+
+    /// Attach a [`ProfileStorage`] (and matching [`InstallIdProvider`])
+    /// to this manager. Call this at the composition root before any
+    /// `vpn.connect` is issued — the connect handler clones the `Arc`
+    /// at construction time.
+    ///
+    /// The two trait objects are usually the same underlying store
+    /// (`data::EncryptedProfileStore` implements both), but the API
+    /// accepts separate `Arc`s so tests can mock them independently.
+    pub fn with_profile_storage(
+        mut self,
+        profile_storage: Arc<dyn ProfileStorage>,
+        install_id_provider: Arc<dyn InstallIdProvider>,
+    ) -> Self {
+        // Rebuild connect + disconnect handlers with the new storage.
+        let active_temp_config: Arc<Mutex<Option<TempConfigPath>>> = Arc::new(Mutex::new(None));
+        self.connect = Mutex::new(Pipeline::new(Box::new(ConnectHandler::new(
+            self.registry.clone(),
+            Some(profile_storage.clone()),
+            active_temp_config.clone(),
+        ))));
+        self.disconnect = Mutex::new(Pipeline::new(Box::new(DisconnectHandler::new(
+            self.registry.clone(),
+            active_temp_config,
+        ))));
+        self.profile_storage = Some(profile_storage);
+        self.install_id_provider = Some(install_id_provider);
+        self
     }
 
     // -- Pipeline access (for middleware registration) -----------------------
@@ -312,6 +363,107 @@ impl VpnManager {
             .lock()
             .unwrap_or_else(|e| e.into_inner())
             .clone()
+    }
+
+    // -- Profile storage accessors -------------------------------------------
+
+    /// Borrow the attached [`ProfileStorage`], if any.
+    ///
+    /// The IPC dispatcher uses this to implement `profile.list`,
+    /// `profile.put`, `profile.activate`, etc. When no storage is
+    /// attached (composition root skipped `with_profile_storage`),
+    /// callers should return `StorageError("profile storage not
+    /// configured")` so clients get a clear message.
+    pub fn profile_storage(&self) -> Option<Arc<dyn ProfileStorage>> {
+        self.profile_storage.clone()
+    }
+
+    /// Borrow the attached [`InstallIdProvider`], if any. Used by
+    /// the `daemon.installId` IPC method.
+    pub fn install_id_provider(&self) -> Option<Arc<dyn InstallIdProvider>> {
+        self.install_id_provider.clone()
+    }
+
+    // -- Profile CRUD convenience wrappers -----------------------------------
+    //
+    // These wrap the trait methods with clear error handling for the
+    // "no storage configured" case. The IPC dispatcher calls these
+    // instead of reaching into `profile_storage()` directly so there's
+    // exactly one place that emits the "not configured" error.
+
+    /// List all stored profiles. Returns an empty vec if storage is
+    /// not configured — clients interpret "no storage" as "no
+    /// profiles yet", which matches the legacy behavior.
+    pub fn list_profiles(&self) -> Result<Vec<ProfileMeta>, VpnError> {
+        match self.profile_storage() {
+            Some(s) => s.list(),
+            None => Ok(Vec::new()),
+        }
+    }
+
+    /// Get one profile's metadata.
+    pub fn get_profile(&self, id: &str) -> Result<Option<ProfileMeta>, VpnError> {
+        match self.profile_storage() {
+            Some(s) => s.get_meta(id),
+            None => Ok(None),
+        }
+    }
+
+    /// Insert or update a profile. Errors with `StorageError` when
+    /// no storage is configured.
+    pub fn put_profile(&self, profile: Profile, config_json: &str) -> Result<Profile, VpnError> {
+        match self.profile_storage() {
+            Some(s) => s.put(profile, config_json),
+            None => Err(VpnError::StorageError(
+                "profile storage not configured".to_string(),
+            )),
+        }
+    }
+
+    /// Delete a profile by id. No-op when storage is not configured.
+    pub fn delete_profile(&self, id: &str) -> Result<(), VpnError> {
+        match self.profile_storage() {
+            Some(s) => s.delete(id),
+            None => Ok(()),
+        }
+    }
+
+    /// Get the active profile id, if any.
+    pub fn active_profile(&self) -> Result<Option<String>, VpnError> {
+        match self.profile_storage() {
+            Some(s) => s.active(),
+            None => Ok(None),
+        }
+    }
+
+    /// Set the active profile. Errors with `StorageError` when no
+    /// storage is configured.
+    pub fn set_active_profile(&self, id: &str) -> Result<(), VpnError> {
+        match self.profile_storage() {
+            Some(s) => s.set_active(id),
+            None => Err(VpnError::StorageError(
+                "profile storage not configured".to_string(),
+            )),
+        }
+    }
+
+    /// Clear the active profile pointer.
+    pub fn clear_active_profile(&self) -> Result<(), VpnError> {
+        match self.profile_storage() {
+            Some(s) => s.clear_active(),
+            None => Ok(()),
+        }
+    }
+
+    /// Return the daemon's install ID, generating one on first call.
+    /// Errors if no [`InstallIdProvider`] is configured.
+    pub fn install_id(&self) -> Result<String, VpnError> {
+        match self.install_id_provider() {
+            Some(p) => p.install_id(),
+            None => Err(VpnError::StorageError(
+                "install id provider not configured".to_string(),
+            )),
+        }
     }
 
     /// Which capability pipelines are registered.
@@ -980,5 +1132,369 @@ mod tests {
             panic!("intentional poison");
         });
         assert!(mgr.get_setting("config_path").is_ok());
+    }
+
+    // -- Profile storage integration ----------------------------------------
+    //
+    // These tests verify that wiring a ProfileStorage into VpnManager
+    // causes the connect handler to prefer the active profile's
+    // decrypted config over the legacy `config_path` setting, and that
+    // disconnecting drops the decrypted temp file.
+    //
+    // We use a tiny in-memory ProfileStorage impl instead of pulling in
+    // data::EncryptedProfileStore (which would create a cyclic dep
+    // from service → data → service via MemorySettingsStorage).
+
+    use domain::{InstallIdProvider, Profile, ProfileMeta, ProfileStorage, TempConfigPath};
+    use std::collections::HashMap;
+    use std::time::SystemTime;
+
+    /// In-memory profile storage for tests. Not encrypted — stores
+    /// plaintext bytes in a HashMap and writes decrypted temp files
+    /// to `std::env::temp_dir()`.
+    struct TestProfileStorage {
+        inner: Mutex<TestProfileInner>,
+    }
+
+    #[derive(Default)]
+    struct TestProfileInner {
+        profiles: HashMap<String, (ProfileMeta, Vec<u8>)>,
+        active: Option<String>,
+    }
+
+    impl TestProfileStorage {
+        fn new() -> Self {
+            Self {
+                inner: Mutex::new(TestProfileInner::default()),
+            }
+        }
+    }
+
+    impl ProfileStorage for TestProfileStorage {
+        fn list(&self) -> Result<Vec<ProfileMeta>, VpnError> {
+            let g = self.inner.lock().unwrap_or_else(|e| e.into_inner());
+            let active = g.active.clone();
+            Ok(g.profiles
+                .values()
+                .map(|(m, _)| {
+                    let mut m = m.clone();
+                    m.is_active = Some(&m.id) == active.as_ref();
+                    m
+                })
+                .collect())
+        }
+
+        fn get_meta(&self, id: &str) -> Result<Option<ProfileMeta>, VpnError> {
+            let g = self.inner.lock().unwrap_or_else(|e| e.into_inner());
+            Ok(g.profiles.get(id).map(|(m, _)| {
+                let mut m = m.clone();
+                m.is_active = Some(&m.id) == g.active.as_ref();
+                m
+            }))
+        }
+
+        fn put(&self, mut profile: Profile, config_json: &str) -> Result<Profile, VpnError> {
+            let mut g = self.inner.lock().unwrap_or_else(|e| e.into_inner());
+            if profile.id.is_empty() {
+                profile.id = format!("test-{}", g.profiles.len());
+            }
+            let meta = ProfileMeta {
+                id: profile.id.clone(),
+                name: profile.name.clone(),
+                core_type: profile.core_type.clone(),
+                source: profile.source.clone(),
+                metadata: profile.metadata.clone(),
+                created_at: profile.created_at,
+                last_used_at: profile.last_used_at,
+                is_active: false,
+            };
+            g.profiles
+                .insert(profile.id.clone(), (meta, config_json.as_bytes().to_vec()));
+            Ok(profile)
+        }
+
+        fn delete(&self, id: &str) -> Result<(), VpnError> {
+            let mut g = self.inner.lock().unwrap_or_else(|e| e.into_inner());
+            g.profiles.remove(id);
+            if g.active.as_deref() == Some(id) {
+                g.active = None;
+            }
+            Ok(())
+        }
+
+        fn active(&self) -> Result<Option<String>, VpnError> {
+            Ok(self
+                .inner
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .active
+                .clone())
+        }
+
+        fn set_active(&self, id: &str) -> Result<(), VpnError> {
+            let mut g = self.inner.lock().unwrap_or_else(|e| e.into_inner());
+            if !g.profiles.contains_key(id) {
+                return Err(VpnError::CoreNotFound(format!("profile {id} not found")));
+            }
+            g.active = Some(id.to_string());
+            Ok(())
+        }
+
+        fn clear_active(&self) -> Result<(), VpnError> {
+            self.inner
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .active = None;
+            Ok(())
+        }
+
+        fn load_active_for_core_start(&self) -> Result<TempConfigPath, VpnError> {
+            let g = self.inner.lock().unwrap_or_else(|e| e.into_inner());
+            let id = g.active.clone().ok_or(VpnError::NotConnected)?;
+            let bytes = g
+                .profiles
+                .get(&id)
+                .map(|(_, b)| b.clone())
+                .ok_or_else(|| VpnError::StorageError("active profile missing".into()))?;
+            // Nanos suffix so parallel test runs with the same profile
+            // id never collide on the same path.
+            let nanos = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_nanos())
+                .unwrap_or(0);
+            let path = std::env::temp_dir().join(format!(
+                "pingle-test-profile-{}-{}-{}.json",
+                std::process::id(),
+                id,
+                nanos
+            ));
+            std::fs::write(&path, &bytes)
+                .map_err(|e| VpnError::StorageError(format!("write temp: {e}")))?;
+            Ok(TempConfigPath::new(path))
+        }
+    }
+
+    struct TestInstallIdProvider {
+        id: String,
+    }
+
+    impl InstallIdProvider for TestInstallIdProvider {
+        fn install_id(&self) -> Result<String, VpnError> {
+            Ok(self.id.clone())
+        }
+    }
+
+    /// Recording core: captures the last `config_path` it was asked to
+    /// start with, so tests can assert which path the handler resolved.
+    struct RecordingCore {
+        state: ConnectionState,
+        last_start_path: Arc<Mutex<Option<String>>>,
+    }
+
+    impl RecordingCore {
+        fn new() -> (Self, Arc<Mutex<Option<String>>>) {
+            let recorded = Arc::new(Mutex::new(None));
+            let core = Self {
+                state: ConnectionState::Disconnected,
+                last_start_path: recorded.clone(),
+            };
+            (core, recorded)
+        }
+    }
+
+    impl VpnCore for RecordingCore {
+        fn start(&mut self, config_path: &str) -> Result<(), VpnError> {
+            *self
+                .last_start_path
+                .lock()
+                .unwrap_or_else(|e| e.into_inner()) = Some(config_path.to_string());
+            self.state = ConnectionState::Connected;
+            Ok(())
+        }
+        fn stop(&mut self) -> Result<(), VpnError> {
+            self.state = ConnectionState::Disconnected;
+            Ok(())
+        }
+        fn kill(&mut self) -> Result<(), VpnError> {
+            self.state = ConnectionState::Disconnected;
+            Ok(())
+        }
+        fn status(&self) -> ConnectionState {
+            self.state.clone()
+        }
+        fn info(&self) -> CoreInfo {
+            CoreInfo {
+                name: "recording".into(),
+                version: "0.0.0".into(),
+                supported_protocols: vec![],
+            }
+        }
+        fn validate_config(&self, _: &str) -> Result<(), VpnError> {
+            Ok(())
+        }
+        fn check_prerequisites(&self) -> Vec<PrerequisiteCheck> {
+            vec![]
+        }
+        fn subscribe(&self) -> Option<std::sync::mpsc::Receiver<domain::CoreEvent>> {
+            None
+        }
+    }
+
+    fn manager_with_recording_core_and_profile() -> (
+        VpnManager,
+        Arc<Mutex<Option<String>>>,
+        Arc<TestProfileStorage>,
+    ) {
+        let (core, recorded) = RecordingCore::new();
+        let mut reg = CoreRegistry::new();
+        reg.register(
+            CoreDescriptor {
+                core_type: "recording".into(),
+                display_name: "Recording".into(),
+                source: CoreSource::Mocked,
+                binary_path: None,
+                available: true,
+            },
+            Box::new(core),
+        );
+        let mut storage = MemorySettingsStorage::new();
+        storage
+            .set_string("config_path", "/legacy/path.json")
+            .unwrap();
+
+        let profile_storage = Arc::new(TestProfileStorage::new());
+        let id_provider: Arc<dyn InstallIdProvider> = Arc::new(TestInstallIdProvider {
+            id: "test-install-id".into(),
+        });
+        let mgr = VpnManager::new(reg, Box::new(storage))
+            .with_profile_storage(profile_storage.clone(), id_provider);
+        (mgr, recorded, profile_storage)
+    }
+
+    fn sample_profile(name: &str) -> Profile {
+        Profile {
+            id: String::new(),
+            name: name.into(),
+            core_type: "sing-box".into(),
+            source: domain::ProfileSource::Imported { filename: None },
+            metadata: std::collections::BTreeMap::new(),
+            created_at: SystemTime::now(),
+            last_used_at: None,
+        }
+    }
+
+    #[test]
+    fn connect_uses_active_profile_when_present() {
+        let (mgr, recorded, store) = manager_with_recording_core_and_profile();
+        let p = store
+            .put(sample_profile("Home"), r#"{"key":"value"}"#)
+            .unwrap();
+        store.set_active(&p.id).unwrap();
+
+        mgr.connect().unwrap();
+
+        let path = recorded
+            .lock()
+            .unwrap()
+            .clone()
+            .expect("core.start was called");
+        // The recorded path must be the decrypted temp file, not the
+        // legacy /legacy/path.json setting.
+        assert!(
+            path.contains("pingle-test-profile") && path.contains(&p.id),
+            "expected profile temp path, got: {path}"
+        );
+        assert_ne!(path, "/legacy/path.json");
+    }
+
+    #[test]
+    fn connect_falls_back_to_legacy_config_path_when_no_active_profile() {
+        let (mgr, recorded, _store) = manager_with_recording_core_and_profile();
+        // No active profile set — should fall through to legacy path.
+        mgr.connect().unwrap();
+        let path = recorded.lock().unwrap().clone().unwrap();
+        assert_eq!(path, "/legacy/path.json");
+    }
+
+    #[test]
+    fn connect_falls_back_when_profile_storage_returns_not_connected() {
+        // Active profile set but the store returns NotConnected —
+        // e.g. a store that never had put() called. ConnectHandler
+        // should still fall back instead of bubbling the error.
+        let (mgr, recorded, _store) = manager_with_recording_core_and_profile();
+        // Don't put anything, don't set active — store's active()
+        // returns None, load_active_for_core_start returns NotConnected,
+        // handler falls back.
+        mgr.connect().unwrap();
+        let path = recorded.lock().unwrap().clone().unwrap();
+        assert_eq!(path, "/legacy/path.json");
+    }
+
+    #[test]
+    fn disconnect_deletes_decrypted_temp_file() {
+        let (mgr, recorded, store) = manager_with_recording_core_and_profile();
+        let p = store.put(sample_profile("Home"), "{}").unwrap();
+        store.set_active(&p.id).unwrap();
+        mgr.connect().unwrap();
+
+        let temp_path = recorded.lock().unwrap().clone().unwrap();
+        assert!(std::path::Path::new(&temp_path).exists());
+
+        mgr.disconnect().unwrap();
+        // After disconnect, the TempConfigPath is dropped and the
+        // file should be gone.
+        assert!(
+            !std::path::Path::new(&temp_path).exists(),
+            "disconnect should have deleted {temp_path}"
+        );
+    }
+
+    #[test]
+    fn profile_crud_via_manager() {
+        let (mgr, _rec, _store) = manager_with_recording_core_and_profile();
+
+        assert!(mgr.list_profiles().unwrap().is_empty());
+
+        let p = mgr.put_profile(sample_profile("Home"), "{}").unwrap();
+        assert!(!p.id.is_empty());
+
+        let list = mgr.list_profiles().unwrap();
+        assert_eq!(list.len(), 1);
+
+        mgr.set_active_profile(&p.id).unwrap();
+        assert_eq!(mgr.active_profile().unwrap().as_deref(), Some(p.id.as_str()));
+
+        mgr.delete_profile(&p.id).unwrap();
+        assert!(mgr.active_profile().unwrap().is_none());
+    }
+
+    #[test]
+    fn list_profiles_returns_empty_when_storage_not_configured() {
+        let mgr = manager_with_config();
+        assert!(mgr.list_profiles().unwrap().is_empty());
+    }
+
+    #[test]
+    fn put_profile_errors_when_storage_not_configured() {
+        let mgr = manager_with_config();
+        assert!(matches!(
+            mgr.put_profile(sample_profile("x"), "{}"),
+            Err(VpnError::StorageError(_))
+        ));
+    }
+
+    #[test]
+    fn install_id_returns_configured_value() {
+        let (mgr, _, _) = manager_with_recording_core_and_profile();
+        assert_eq!(mgr.install_id().unwrap(), "test-install-id");
+    }
+
+    #[test]
+    fn install_id_errors_when_provider_not_configured() {
+        let mgr = manager_with_config();
+        assert!(matches!(
+            mgr.install_id(),
+            Err(VpnError::StorageError(_))
+        ));
     }
 }

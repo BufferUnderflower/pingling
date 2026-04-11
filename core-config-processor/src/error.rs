@@ -171,7 +171,7 @@ mod tests {
     #[test]
     fn classifies_dns_failure_from_text() {
         let err =
-            VpnError::ProcessStartFailed("lookup panel.example.com: no such host".into());
+            VpnError::ProcessStartFailed("lookup example.com: no such host".into());
         assert_eq!(classify_error(&err).kind, ErrorKind::DnsFailure);
     }
 

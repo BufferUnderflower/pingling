@@ -2,7 +2,9 @@ name: CI
 
 on:
   push:
-    branches: [main, "feat/*"]
+    branches: [main]
+  pull_request:
+    branches: [main]
   workflow_dispatch:
   release:
     types: [published]
@@ -18,7 +20,7 @@ env:
 
 jobs:
 
-  # ── tests (all platforms) ──────────────────────────────────────────────
+  # ── tests ──────────────────────────────────────────────────────────────
   test-linux:
     name: test · Linux
     runs-on: ubuntu-latest
@@ -46,7 +48,7 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - run: cargo test --workspace --exclude app
 
-  # ── CLI binary (Windows) ──────────────────────────────────────────────
+  # ── headless CLI binary ────────────────────────────────────────────────
   build-cli-windows:
     name: build · CLI · Windows
     needs: test-windows
@@ -64,7 +66,7 @@ jobs:
           path: target/release/pingling.exe
           if-no-files-found: error
 
-  # ── Tauri app (Windows .msi + .exe with tray) ─────────────────────────
+  # ── Tauri tray app (unsigned .msi + NSIS installer) ───────────────────
   build-app-windows:
     name: build · App · Windows
     needs: test-windows
@@ -75,7 +77,6 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           shared-key: windows-release
-          # Cache ~/.cargo/bin so tauri-cli survives across runs.
           cache-directories: ~/.cargo/bin
 
       - name: Stage sing-box sidecar
@@ -87,18 +88,14 @@ jobs:
           unzip -q /tmp/sb.zip -d /tmp/sb
           cp "/tmp/sb/sing-box-${SINGBOX_VERSION}-windows-amd64/sing-box.exe" "app/binaries/sing-box-x86_64-pc-windows-msvc.exe"
 
-      - name: Install tauri-cli (cached across runs)
+      - name: Install tauri-cli
         shell: bash
         run: |
-          if command -v cargo-tauri >/dev/null 2>&1; then
-            echo "tauri-cli already installed (from cache)"
-            cargo tauri --version
-          else
-            echo "installing tauri-cli from crates.io..."
+          if ! command -v cargo-tauri >/dev/null 2>&1; then
             cargo install tauri-cli --version "^2" --locked
           fi
 
-      - name: Build Tauri app (unsigned .msi + .exe installer)
+      - name: Build Tauri app
         working-directory: app
         run: cargo tauri build
 

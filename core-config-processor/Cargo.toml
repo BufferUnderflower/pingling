@@ -1,17 +1,15 @@
 [package]
-name = "pingle-pipeline-plugin"
+name = "core-config-processor"
 version = "0.1.0"
 edition = "2021"
-description = "Extism plugin slot for the pingle config processor pipeline"
+description = "Generic config processor pipeline for VPN cores: trait + passthrough + extism plugin slot"
 
 [lib]
-name = "pingle_pipeline_plugin"
+name = "core_config_processor"
 crate-type = ["rlib"]
 
 [dependencies]
 domain = { path = "../domain" }
-core-config-processor = { path = "../core-config-processor" }
-extism = "1.21"
 log = "0.4"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"

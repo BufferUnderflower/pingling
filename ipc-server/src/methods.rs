@@ -270,6 +270,129 @@ fn call(
         })),
         x if x == m::DAEMON_PING => Ok(json!({ "pong": true })),
 
+        x if x == m::DAEMON_INSTALL_ID => match vpn.install_id() {
+            Ok(id) => Ok(json!({ "install_id": id })),
+            Err(e) => Err(vpn_error_to_rpc(e)),
+        },
+
+        // ----- Profile management ------------------------------------------
+        //
+        // Profiles are the encrypted config source. Clients can put,
+        // list, activate, delete — but never read the config body back
+        // over IPC. See the design spec in
+        // docs/superpowers/specs/2026-04-11-profiles-deeplink-encrypted-storage.md
+        x if x == m::PROFILE_LIST => match vpn.list_profiles() {
+            Ok(metas) => Ok(json!({ "profiles": metas })),
+            Err(e) => Err(vpn_error_to_rpc(e)),
+        },
+
+        x if x == m::PROFILE_GET => {
+            let params: ProfileGetParams = parse_params(&req.params)?;
+            match vpn.get_profile(&params.id) {
+                Ok(Some(meta)) => Ok(json!({ "profile": meta })),
+                Ok(None) => Ok(json!({ "profile": null })),
+                Err(e) => Err(vpn_error_to_rpc(e)),
+            }
+        }
+
+        x if x == m::PROFILE_PUT => {
+            let params: ProfilePutParams = parse_params(&req.params)?;
+            let profile = domain::Profile {
+                id: params.id.unwrap_or_default(),
+                name: params.name,
+                core_type: params.core_type,
+                source: params.source.unwrap_or(domain::ProfileSource::Imported {
+                    filename: None,
+                }),
+                metadata: params.metadata.unwrap_or_default(),
+                created_at: std::time::SystemTime::now(),
+                last_used_at: None,
+            };
+            match vpn.put_profile(profile, &params.config_json) {
+                Ok(p) => {
+                    broadcaster.publish(Notification::new(
+                        crate::protocol_constants::events::PROFILE_CHANGED,
+                        json!({ "id": p.id, "action": "put" }),
+                    ));
+                    Ok(json!({ "id": p.id }))
+                }
+                Err(e) => Err(vpn_error_to_rpc(e)),
+            }
+        }
+
+        x if x == m::PROFILE_DELETE => {
+            let params: ProfileGetParams = parse_params(&req.params)?;
+            match vpn.delete_profile(&params.id) {
+                Ok(()) => {
+                    broadcaster.publish(Notification::new(
+                        crate::protocol_constants::events::PROFILE_CHANGED,
+                        json!({ "id": params.id, "action": "delete" }),
+                    ));
+                    Ok(json!({}))
+                }
+                Err(e) => Err(vpn_error_to_rpc(e)),
+            }
+        }
+
+        x if x == m::PROFILE_ACTIVE => match vpn.active_profile() {
+            Ok(id) => Ok(json!({ "id": id })),
+            Err(e) => Err(vpn_error_to_rpc(e)),
+        },
+
+        x if x == m::PROFILE_ACTIVATE => {
+            let params: ProfileGetParams = parse_params(&req.params)?;
+            match vpn.set_active_profile(&params.id) {
+                Ok(()) => {
+                    broadcaster.publish(Notification::new(
+                        crate::protocol_constants::events::PROFILE_CHANGED,
+                        json!({ "id": params.id, "action": "activate" }),
+                    ));
+                    Ok(json!({ "active_id": params.id }))
+                }
+                Err(e) => Err(vpn_error_to_rpc(e)),
+            }
+        }
+
+        x if x == m::PROFILE_CLEAR_ACTIVE => match vpn.clear_active_profile() {
+            Ok(()) => {
+                broadcaster.publish(Notification::new(
+                    crate::protocol_constants::events::PROFILE_CHANGED,
+                    json!({ "action": "clear_active" }),
+                ));
+                Ok(json!({}))
+            }
+            Err(e) => Err(vpn_error_to_rpc(e)),
+        },
+
+        // ----- Deep-link handling ------------------------------------------
+        //
+        // Parses `pingle://...`, dispatches to the loaded plugin's
+        // `deeplink.resolve` method (if any), falls back to the
+        // built-in resolver (handles `pingle://import?config=<base64>`),
+        // and applies the result: stores a new profile + optionally
+        // activates + optionally connects based on the next_action
+        // hint in the resolution.
+        x if x == m::DEEPLINK_HANDLE => {
+            let params: DeeplinkHandleParams = parse_params(&req.params)?;
+            match crate::deeplink::handle_deeplink(vpn, &params.url) {
+                Ok(outcome) => {
+                    // On a successful import, publish profileChanged
+                    // so clients can refresh their lists.
+                    if outcome.profile_id.is_some() {
+                        broadcaster.publish(Notification::new(
+                            crate::protocol_constants::events::PROFILE_CHANGED,
+                            json!({
+                                "id": outcome.profile_id,
+                                "action": "deeplink",
+                            }),
+                        ));
+                    }
+                    Ok(serde_json::to_value(&outcome).unwrap_or_else(|_| json!({})))
+                }
+                Err(e) => Err(vpn_error_to_rpc(e)),
+            }
+        }
+
         // ----- Event subscription ------------------------------------------
         // Subscribing is implicit: every connection is auto-subscribed by
         // the server. These two are kept so old clients that send them get
@@ -405,6 +528,42 @@ struct TestLatencyParams {
     /// Empty vec = test all outbounds.
     #[serde(default, rename = "outboundIds", alias = "outbound_ids")]
     outbound_ids: Vec<String>,
+}
+
+/// Single-id param used by `profile.get`, `profile.delete`, `profile.activate`.
+#[derive(Debug, Deserialize)]
+struct ProfileGetParams {
+    id: String,
+}
+
+/// Params for `deeplink.handle`.
+#[derive(Debug, Deserialize)]
+struct DeeplinkHandleParams {
+    url: String,
+}
+
+/// Create/update params for `profile.put`.
+///
+/// The `id` field is optional — when absent the daemon generates a
+/// fresh UUID. Clients that want stable ids (reproducible integration
+/// tests) can set it explicitly.
+///
+/// The `config_json` field is the plaintext config body. Once the
+/// daemon acknowledges the `put`, the client should forget it — the
+/// next `profile.get` returns metadata only.
+#[derive(Debug, Deserialize)]
+struct ProfilePutParams {
+    #[serde(default)]
+    id: Option<String>,
+    name: String,
+    #[serde(rename = "coreType", alias = "core_type")]
+    core_type: String,
+    #[serde(rename = "configJson", alias = "config_json")]
+    config_json: String,
+    #[serde(default)]
+    source: Option<domain::ProfileSource>,
+    #[serde(default)]
+    metadata: Option<std::collections::BTreeMap<String, String>>,
 }
 
 // ---------------------------------------------------------------------------

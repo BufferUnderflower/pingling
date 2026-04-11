@@ -36,5 +36,4 @@ pub mod geo_filter;
 pub mod latency_bias;
 pub mod logging;
 pub mod singbox_config;
-pub mod strategy_retry;
 pub mod validate;

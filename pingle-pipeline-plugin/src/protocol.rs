@@ -4,7 +4,7 @@
 //! round-trips through `serde_json` and is the single source of truth
 //! for both ends of the wire.
 
-use pingle_config_pipeline::AttemptInfo;
+use core_config_processor::AttemptInfo;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
@@ -141,11 +141,11 @@ pub struct ProcessConfigAttempt {
     /// Stage being processed.
     pub stage: PipelineStage,
     /// Active strategy.
-    pub strategy: pingle_config_pipeline::ConnectionStrategy,
+    pub strategy: core_config_processor::ConnectionStrategy,
     /// 1-based attempt counter inside the current strategy.
     pub attempt_number: u32,
     /// `None` on the first attempt of any strategy.
-    pub previous_error: Option<pingle_config_pipeline::PreviousError>,
+    pub previous_error: Option<core_config_processor::PreviousError>,
 }
 
 impl ProcessConfigAttempt {
@@ -174,7 +174,7 @@ pub struct ProcessConfigOutput {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use pingle_config_pipeline::{
+    use core_config_processor::{
         ConnectionStrategy, ErrorKind, PreviousError, ResolverType, RetryPolicy, StackType,
     };
     use serde_json::json;

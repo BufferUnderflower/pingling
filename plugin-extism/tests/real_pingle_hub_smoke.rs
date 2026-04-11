@@ -13,7 +13,7 @@
 //!
 //! This test does NOT make any HTTPS requests — `auth.login` /
 //! `profile.bootstrap` need real credentials and network reach to
-//! `panel.example.com`, which is reserved for the end-to-end
+//! `example.com`, which is reserved for the end-to-end
 //! daemon-driven test in `tests/end_to_end.sh`.
 //!
 //! ## Usage
@@ -44,7 +44,7 @@ fn real_pingle_hub_wasm_loads_and_exposes_authenticator() {
 
     let plugin = PluginAdapter::load(
         &path,
-        vec!["panel.example.com".to_string()],
+        vec!["example.com".to_string()],
     )
     .expect("PluginAdapter::load on the real wasm should succeed");
     eprintln!("loaded plugin: {}", plugin.name());
