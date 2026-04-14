@@ -77,16 +77,69 @@ impl DaemonAdvertisement {
     }
 }
 
+/// Best-effort machine hostname. Tries multiple sources because the
+/// answer matters for cross-machine LAN discovery (clients use it to
+/// pick a TCP host) but for same-machine clients the daemon binds to
+/// loopback so any answer here is "name only".
+///
+/// Strategy:
+/// 1. `$HOSTNAME` env (Linux shells often set it).
+/// 2. `$COMPUTERNAME` env (Windows).
+/// 3. POSIX `gethostname(2)` syscall — works on macOS, Linux, BSD.
+///    GUI-launched processes on macOS often have neither HOSTNAME nor
+///    /etc/hostname, but always have a kernel-reported hostname.
+/// 4. `/etc/hostname` (some stripped-down Linux containers).
+/// 5. `"localhost"` — a *correct* loopback name, not the misleading
+///    `"unknown"` we used to write. The daemon binds to loopback only;
+///    `localhost` resolves on every platform.
 fn hostname() -> String {
-    std::env::var("HOSTNAME")
-        .or_else(|_| std::env::var("COMPUTERNAME"))
-        .unwrap_or_else(|_| {
-            // Fall back to libc::gethostname via /etc/hostname read; cheap
-            // and avoids pulling a hostname crate.
-            fs::read_to_string("/etc/hostname")
-                .map(|s| s.trim().to_string())
-                .unwrap_or_else(|_| "unknown".into())
-        })
+    if let Ok(h) = std::env::var("HOSTNAME") {
+        let h = h.trim();
+        if !h.is_empty() {
+            return h.to_string();
+        }
+    }
+    if let Ok(h) = std::env::var("COMPUTERNAME") {
+        let h = h.trim();
+        if !h.is_empty() {
+            return h.to_string();
+        }
+    }
+
+    // POSIX gethostname(2). Avoids /etc/hostname (which doesn't exist on
+    // macOS) and avoids pulling a third-party hostname crate.
+    #[cfg(unix)]
+    {
+        let mut buf = [0i8; 256];
+        // SAFETY: gethostname writes at most buf.len() bytes (NUL-terminated)
+        // into `buf` and returns 0 on success, -1 on failure. We never read
+        // past the NUL.
+        let rc = unsafe {
+            libc::gethostname(buf.as_mut_ptr(), buf.len())
+        };
+        if rc == 0 {
+            let bytes: &[u8] = unsafe {
+                std::slice::from_raw_parts(buf.as_ptr() as *const u8, buf.len())
+            };
+            let len = bytes.iter().position(|&b| b == 0).unwrap_or(bytes.len());
+            if let Ok(s) = std::str::from_utf8(&bytes[..len]) {
+                let trimmed = s.trim();
+                if !trimmed.is_empty() {
+                    return trimmed.to_string();
+                }
+            }
+        }
+    }
+
+    if let Ok(s) = fs::read_to_string("/etc/hostname") {
+        let trimmed = s.trim();
+        if !trimmed.is_empty() {
+            return trimmed.to_string();
+        }
+    }
+
+    // The daemon binds loopback only — "localhost" is correct, "unknown" was a lie.
+    "localhost".to_string()
 }
 
 /// Compute the directory where per-daemon registration files live.

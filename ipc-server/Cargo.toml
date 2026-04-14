@@ -60,6 +60,10 @@ plugin-extism = { path = "../plugin-extism", optional = true }
 # path = .. keeps resolver happy in the workspace; it's just never
 # compiled unless the feature gate brings it in.
 core-libbox-windows = { path = "../core-libbox-windows", optional = true }
+# POSIX gethostname(2) for accurate hostname detection on macOS/Linux.
+# Only used on unix targets — see discovery.rs `fn hostname()`.
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
 
 [dev-dependencies]
 core-mock = { path = "../core-mock" }
