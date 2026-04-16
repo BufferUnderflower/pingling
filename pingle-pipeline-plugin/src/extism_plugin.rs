@@ -12,7 +12,7 @@ use crate::protocol::{
     PipelineCapabilities, PipelineStage, ProcessConfigInput, ProcessConfigOutput, WIRE_VERSION,
 };
 use crate::trait_def::{PipelinePlugin, PluginError};
-use extism::{Manifest, Plugin, Wasm};
+use extism::{Manifest, Plugin, PluginBuilder, Wasm};
 use std::path::Path;
 use std::sync::Mutex;
 
@@ -42,14 +42,10 @@ impl ExtismPipelinePlugin {
             .unwrap_or("unknown")
             .to_string();
 
-        log::info!(
-            "loading pipeline plugin: {name} from {}",
-            path.display()
-        );
+        log::info!("loading pipeline plugin: {name} from {}", path.display());
         let wasm = Wasm::file(path);
         let manifest = Manifest::new([wasm]);
-        let plugin = Plugin::new(&manifest, [], true)
-            .map_err(|e| PluginError::Wasm(format!("load {name}: {e}")))?;
+        let plugin = build_plugin(manifest, &name)?;
 
         let mut adapter = Self {
             name,
@@ -111,6 +107,39 @@ impl ExtismPipelinePlugin {
             .lock()
             .unwrap_or_else(|e| e.into_inner())
             .function_exists(fn_name)
+    }
+}
+
+fn build_plugin(manifest: Manifest, name: &str) -> Result<Plugin, PluginError> {
+    let mut builder = PluginBuilder::new(manifest).with_wasi(true);
+    if let Some(target) = configured_wasmtime_target() {
+        let mut config = wasmtime::Config::new();
+        config
+            .target(&target)
+            .map_err(|e| PluginError::Wasm(format!("load {name}: invalid Wasmtime target `{target}`: {e:#}")))?;
+        log::info!("loading pipeline plugin {name} with Wasmtime target {target}");
+        builder = builder.with_wasmtime_config(config);
+    }
+    builder
+        .build()
+        .map_err(|e| PluginError::Wasm(format!("load {name}: {e:#}")))
+}
+
+fn configured_wasmtime_target() -> Option<String> {
+    match std::env::var("PINGLE_WASMTIME_TARGET")
+        .ok()
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
+        Some("native") => None,
+        Some(target) => Some(target.to_string()),
+        None if std::env::consts::OS == "macos"
+            && matches!(std::env::consts::ARCH, "aarch64" | "x86_64") =>
+        {
+            Some("pulley64".into())
+        }
+        None => None,
     }
 }
 

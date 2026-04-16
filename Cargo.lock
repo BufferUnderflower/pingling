@@ -2579,6 +2579,7 @@ dependencies = [
  "data",
  "domain",
  "env_logger",
+ "libc",
  "log",
  "percent-encoding",
  "plugin-extism",
@@ -3795,6 +3796,7 @@ dependencies = [
  "serde",
  "serde_json",
  "tempfile",
+ "wasmtime",
 ]
 
 [[package]]
@@ -3826,6 +3828,7 @@ dependencies = [
  "serde",
  "serde_json",
  "tempfile",
+ "wasmtime",
 ]
 
 [[package]]

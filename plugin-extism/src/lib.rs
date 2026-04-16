@@ -66,7 +66,7 @@ pub mod plugin_adapter;
 use domain::ops::*;
 use domain::pipeline::Hook;
 use domain::VpnError;
-use extism::{Manifest, Plugin, Wasm};
+use extism::{Manifest, Plugin, PluginBuilder, Wasm};
 use log::{debug, info, warn};
 use std::path::Path;
 use std::sync::Mutex;
@@ -104,6 +104,9 @@ pub struct LoadOptions {
     /// runtime — by design, so a malicious plugin can't exfiltrate
     /// to attacker-controlled hosts.
     pub allowed_hosts: Vec<String>,
+    /// Static manifest config exposed to the plugin runtime.
+    /// Used for host facts and policy defaults such as target OS.
+    pub config: Vec<(String, String)>,
     /// Per-call wall-clock timeout in milliseconds. None = use the
     /// extism default (~30s as of 1.21).
     pub timeout_ms: Option<u64>,
@@ -135,15 +138,15 @@ impl ExtismPlugin {
         let mut manifest = Manifest::new([wasm]);
         if !opts.allowed_hosts.is_empty() {
             manifest = manifest.with_allowed_hosts(opts.allowed_hosts.clone().into_iter());
-            info!(
-                "  allowed_hosts: {}",
-                opts.allowed_hosts.join(", ")
-            );
+            info!("  allowed_hosts: {}", opts.allowed_hosts.join(", "));
+        }
+        if !opts.config.is_empty() {
+            manifest = manifest.with_config(opts.config.clone().into_iter());
         }
         if let Some(ms) = opts.timeout_ms {
             manifest = manifest.with_timeout(std::time::Duration::from_millis(ms));
         }
-        let plugin = Plugin::new(&manifest, [], true).map_err(|e| format!("load {name}: {e}"))?;
+        let plugin = build_plugin(manifest, &name)?;
 
         Ok(Self {
             name,
@@ -173,17 +176,17 @@ impl ExtismPlugin {
         }
         let json_in = serde_json::to_string(input)
             .map_err(|e| format!("serialise input for {fn_name}: {e}"))?;
-        debug!("calling {}.{fn_name} with {} bytes", self.name, json_in.len());
+        debug!(
+            "calling {}.{fn_name} with {} bytes",
+            self.name,
+            json_in.len()
+        );
         let mut plugin = self.plugin.lock().unwrap_or_else(|e| e.into_inner());
         let raw = plugin
             .call::<&str, &str>(fn_name, &json_in)
             .map_err(|e| format!("plugin {} {fn_name}: {e}", self.name))?;
-        serde_json::from_str(raw).map_err(|e| {
-            format!(
-                "plugin {} {fn_name}: invalid JSON response: {e}",
-                self.name
-            )
-        })
+        serde_json::from_str(raw)
+            .map_err(|e| format!("plugin {} {fn_name}: invalid JSON response: {e}", self.name))
     }
 
     /// Whether the WASM module exports a given function name.
@@ -228,11 +231,77 @@ impl ExtismPlugin {
                 .get("reason")
                 .and_then(|r| r.as_str())
                 .unwrap_or("rejected by plugin");
-            Some(VpnError::Unknown(format!("{} ({}): {reason}", self.name, fn_name)))
+            Some(VpnError::Unknown(format!(
+                "{} ({}): {reason}",
+                self.name, fn_name
+            )))
         } else {
             None
         }
     }
+}
+
+fn build_plugin(manifest: Manifest, name: &str) -> Result<Plugin, String> {
+    let mut builder = PluginBuilder::new(manifest).with_wasi(true);
+    if let Some(target) = configured_wasmtime_target() {
+        let mut config = wasmtime::Config::new();
+        config
+            .target(&target)
+            .map_err(|e| format!("load {name}: invalid Wasmtime target `{target}`: {e:#}"))?;
+        info!("loading extism plugin {name} with Wasmtime target {target}");
+        builder = builder.with_wasmtime_config(config);
+    }
+    builder
+        .build()
+        .map_err(|e| format!("load {name}: {e:#}"))
+}
+
+fn configured_wasmtime_target() -> Option<String> {
+    let raw_override = std::env::var("PINGLE_WASMTIME_TARGET").ok();
+    resolve_wasmtime_target_override(
+        raw_override.as_deref(),
+        std::env::consts::OS,
+        std::env::consts::ARCH,
+    )
+}
+
+fn resolve_wasmtime_target_override(
+    raw_override: Option<&str>,
+    os: &str,
+    arch: &str,
+) -> Option<String> {
+    match raw_override.map(str::trim).filter(|value| !value.is_empty()) {
+        Some("native") => None,
+        Some(target) => Some(target.to_string()),
+        None if os == "macos" && matches!(arch, "aarch64" | "x86_64") => Some("pulley64".into()),
+        None => None,
+    }
+}
+
+pub fn default_plugin_runtime_config() -> Vec<(String, String)> {
+    vec![
+        (
+            "plugin_target_os".into(),
+            std::env::var("PINGLE_PLUGIN_TARGET_OS")
+                .ok()
+                .filter(|value| !value.trim().is_empty())
+                .unwrap_or_else(|| std::env::consts::OS.to_string()),
+        ),
+        (
+            "plugin_default_country".into(),
+            std::env::var("PINGLE_PLUGIN_PROFILE_COUNTRY")
+                .ok()
+                .filter(|value| !value.trim().is_empty())
+                .unwrap_or_else(|| "WW".into()),
+        ),
+        (
+            "plugin_default_config_type".into(),
+            std::env::var("PINGLE_PLUGIN_CONFIG_TYPE")
+                .ok()
+                .filter(|value| !value.trim().is_empty())
+                .unwrap_or_else(|| "regular".into()),
+        ),
+    ]
 }
 
 // ---------------------------------------------------------------------------
@@ -336,7 +405,10 @@ impl Hook<OpValidateConfig> for ExtismPlugin {
                         input.config_path = tmp_path;
                     }
                     Err(e) => {
-                        warn!("plugin {} before_validate: could not write temp config: {e}", self.name);
+                        warn!(
+                            "plugin {} before_validate: could not write temp config: {e}",
+                            self.name
+                        );
                     }
                 }
             }
@@ -464,10 +536,9 @@ impl Hook<OpListOutbounds> for ExtismPlugin {
                     output.outbounds.retain(|o| keep.contains(&o.id));
                     let removed = before - output.outbounds.len();
                     if removed > 0 {
-                        output.metadata.insert(
-                            format!("{}:filter:removed", self.name),
-                            removed.to_string(),
-                        );
+                        output
+                            .metadata
+                            .insert(format!("{}:filter:removed", self.name), removed.to_string());
                     }
                 }
             }
@@ -550,4 +621,46 @@ fn write_temp_config(content: &str) -> Result<String, std::io::Error> {
     path.to_str()
         .map(|s| s.to_string())
         .ok_or_else(|| std::io::Error::new(std::io::ErrorKind::InvalidData, "non-UTF8 path"))
+}
+
+#[cfg(test)]
+mod runtime_tests {
+    use super::resolve_wasmtime_target_override;
+
+    #[test]
+    fn macos_defaults_to_pulley64() {
+        assert_eq!(
+            resolve_wasmtime_target_override(None, "macos", "aarch64"),
+            Some("pulley64".into())
+        );
+        assert_eq!(
+            resolve_wasmtime_target_override(None, "macos", "x86_64"),
+            Some("pulley64".into())
+        );
+    }
+
+    #[test]
+    fn non_macos_stays_native_by_default() {
+        assert_eq!(resolve_wasmtime_target_override(None, "linux", "x86_64"), None);
+        assert_eq!(
+            resolve_wasmtime_target_override(None, "windows", "x86_64"),
+            None
+        );
+    }
+
+    #[test]
+    fn explicit_native_override_disables_pulley_default() {
+        assert_eq!(
+            resolve_wasmtime_target_override(Some("native"), "macos", "aarch64"),
+            None
+        );
+    }
+
+    #[test]
+    fn explicit_target_override_wins() {
+        assert_eq!(
+            resolve_wasmtime_target_override(Some("pulley32"), "macos", "aarch64"),
+            Some("pulley32".into())
+        );
+    }
 }
