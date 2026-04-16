@@ -134,12 +134,25 @@ fn configured_wasmtime_target() -> Option<String> {
     {
         Some("native") => None,
         Some(target) => Some(target.to_string()),
-        None if std::env::consts::OS == "macos"
-            && matches!(std::env::consts::ARCH, "aarch64" | "x86_64") =>
-        {
-            Some("pulley64".into())
-        }
         None => None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::configured_wasmtime_target;
+
+    #[test]
+    fn default_runtime_stays_native_without_override() {
+        std::env::remove_var("PINGLE_WASMTIME_TARGET");
+        assert_eq!(configured_wasmtime_target(), None);
+    }
+
+    #[test]
+    fn explicit_pulley_override_still_works() {
+        std::env::set_var("PINGLE_WASMTIME_TARGET", "pulley64");
+        assert_eq!(configured_wasmtime_target(), Some("pulley64".into()));
+        std::env::remove_var("PINGLE_WASMTIME_TARGET");
     }
 }
 

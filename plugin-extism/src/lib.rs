@@ -267,13 +267,12 @@ fn configured_wasmtime_target() -> Option<String> {
 
 fn resolve_wasmtime_target_override(
     raw_override: Option<&str>,
-    os: &str,
-    arch: &str,
+    _os: &str,
+    _arch: &str,
 ) -> Option<String> {
     match raw_override.map(str::trim).filter(|value| !value.is_empty()) {
         Some("native") => None,
         Some(target) => Some(target.to_string()),
-        None if os == "macos" && matches!(arch, "aarch64" | "x86_64") => Some("pulley64".into()),
         None => None,
     }
 }
@@ -628,14 +627,14 @@ mod runtime_tests {
     use super::resolve_wasmtime_target_override;
 
     #[test]
-    fn macos_defaults_to_pulley64() {
+    fn default_runtime_stays_native_without_override() {
         assert_eq!(
             resolve_wasmtime_target_override(None, "macos", "aarch64"),
-            Some("pulley64".into())
+            None
         );
         assert_eq!(
             resolve_wasmtime_target_override(None, "macos", "x86_64"),
-            Some("pulley64".into())
+            None
         );
     }
 
