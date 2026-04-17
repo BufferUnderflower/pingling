@@ -77,4 +77,4 @@ mod prereqs;
 mod tunnel_watch;
 
 pub use crate::core::LibboxCoreWindows;
-pub use crate::prereqs::runtime_available;
+pub use crate::prereqs::{ensure_firewall_rules_for_current_exe, runtime_available};

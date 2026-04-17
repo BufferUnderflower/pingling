@@ -499,8 +499,7 @@ fn plugin_meta_for_daemon_info(vpn: &Arc<VpnManager>) -> Value {
 fn core_ensure_firewall_rules(_vpn: &Arc<VpnManager>) -> Result<Value, RpcError> {
     #[cfg(all(target_os = "windows", feature = "libbox-windows"))]
     {
-        core_libbox_windows::prereqs::ensure_firewall_rules_for_current_exe()
-            .map_err(vpn_error_to_rpc)?;
+        core_libbox_windows::ensure_firewall_rules_for_current_exe().map_err(vpn_error_to_rpc)?;
         let checks = _vpn.check_prerequisites();
         let items: Vec<serde_json::Value> = checks
             .iter()
