@@ -160,6 +160,12 @@ impl EncryptedProfileStore {
     }
 
     fn write_meta(&self, meta: &ProfileMeta) -> Result<(), VpnError> {
+        fs::create_dir_all(&self.base_dir).map_err(|e| {
+            VpnError::StorageError(format!(
+                "ensure profiles dir {}: {e}",
+                self.base_dir.display()
+            ))
+        })?;
         let path = self.meta_path(&meta.id);
         let tmp = path.with_extension("json.tmp");
         let mut f = fs::File::create(&tmp).map_err(|e| {
@@ -180,6 +186,12 @@ impl EncryptedProfileStore {
     // -- body I/O ------------------------------------------------------------
 
     fn write_body(&self, id: &str, plaintext: &[u8]) -> Result<(), VpnError> {
+        fs::create_dir_all(&self.base_dir).map_err(|e| {
+            VpnError::StorageError(format!(
+                "ensure profiles dir {}: {e}",
+                self.base_dir.display()
+            ))
+        })?;
         let cipher = self.cipher()?;
         let mut nonce_bytes = [0u8; NONCE_LEN];
         rand::thread_rng().fill_bytes(&mut nonce_bytes);
@@ -255,6 +267,12 @@ impl EncryptedProfileStore {
     }
 
     fn write_active_id(&self, id: Option<&str>) -> Result<(), VpnError> {
+        fs::create_dir_all(&self.base_dir).map_err(|e| {
+            VpnError::StorageError(format!(
+                "ensure profiles dir {}: {e}",
+                self.base_dir.display()
+            ))
+        })?;
         let path = self.active_path();
         let tmp = path.with_extension("txt.tmp");
         let mut f = fs::File::create(&tmp)
