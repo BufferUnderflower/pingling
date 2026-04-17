@@ -52,6 +52,8 @@ pub struct DaemonAdvertisement {
     /// Filesystem path of the Unix domain socket. `None` on Windows or if
     /// UDS failed to bind.
     pub uds: Option<String>,
+    /// Session log file path for this daemon, if the caller published one.
+    pub log_file: Option<String>,
     /// Unix epoch seconds when the daemon started.
     pub started_at: u64,
 }
@@ -65,6 +67,7 @@ impl DaemonAdvertisement {
             hostname: hostname(),
             tcp,
             uds,
+            log_file: std::env::var("PINGLE_DAEMON_LOG_FILE").ok(),
             started_at: SystemTime::now()
                 .duration_since(UNIX_EPOCH)
                 .map(|d| d.as_secs())
@@ -114,13 +117,10 @@ fn hostname() -> String {
         // SAFETY: gethostname writes at most buf.len() bytes (NUL-terminated)
         // into `buf` and returns 0 on success, -1 on failure. We never read
         // past the NUL.
-        let rc = unsafe {
-            libc::gethostname(buf.as_mut_ptr(), buf.len())
-        };
+        let rc = unsafe { libc::gethostname(buf.as_mut_ptr(), buf.len()) };
         if rc == 0 {
-            let bytes: &[u8] = unsafe {
-                std::slice::from_raw_parts(buf.as_ptr() as *const u8, buf.len())
-            };
+            let bytes: &[u8] =
+                unsafe { std::slice::from_raw_parts(buf.as_ptr() as *const u8, buf.len()) };
             let len = bytes.iter().position(|&b| b == 0).unwrap_or(bytes.len());
             if let Ok(s) = std::str::from_utf8(&bytes[..len]) {
                 let trimmed = s.trim();
@@ -332,6 +332,8 @@ pub struct DaemonAdvertisementOwned {
     pub hostname: String,
     pub tcp: Option<String>,
     pub uds: Option<String>,
+    #[serde(default)]
+    pub log_file: Option<String>,
     pub started_at: u64,
 }
 
@@ -346,6 +348,7 @@ mod tests {
         let read = fs::read_to_string(&path).expect("read");
         assert!(read.contains("\"service\":\"pingle\""));
         assert!(read.contains("\"tcp\":\"127.0.0.1:9999\""));
+        assert!(read.contains("\"log_file\":null"));
         cleanup_registry();
     }
 
@@ -371,6 +374,7 @@ mod tests {
         let result = probe_once(&server_addr.to_string(), Duration::from_secs(2)).unwrap();
         assert_eq!(result.service, "pingle");
         assert_eq!(result.tcp.as_deref(), Some("127.0.0.1:9000"));
+        assert_eq!(result.log_file, None);
     }
 }
 
