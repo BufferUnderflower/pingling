@@ -99,7 +99,9 @@ fn main() {
     // sink off at boot for deployments where no listener is
     // expected; the log sink is always on at the trace level.
     let broadcaster = Arc::new(ipc_server::EventBroadcaster::new());
-    let slot_observer = Arc::new(ipc_server::BroadcastingSlotObserver::new(broadcaster.clone()));
+    let slot_observer = Arc::new(ipc_server::BroadcastingSlotObserver::new(
+        broadcaster.clone(),
+    ));
     if matches!(
         std::env::var("PINGLING_SLOT_BROADCAST").as_deref(),
         Ok("0") | Ok("false") | Ok("off")
@@ -138,8 +140,8 @@ fn main() {
         }
     }
 
-    let handle = ipc_server::start_with_broadcaster(vpn, broadcaster)
-        .expect("ipc-server failed to start");
+    let handle =
+        ipc_server::start_with_broadcaster(vpn, broadcaster).expect("ipc-server failed to start");
 
     // Print machine-readable connect info on a single stdout line so test
     // harnesses can pick it up without parsing logs.

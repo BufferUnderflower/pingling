@@ -154,8 +154,15 @@ mod tests {
         let observer = BroadcastingSlotObserver::new(broadcaster.clone());
 
         let payload = json!({"n": 1});
-        for event in ["enter", "unchanged", "continue", "halt", "unhandled", "skipped", "error"]
-        {
+        for event in [
+            "enter",
+            "unchanged",
+            "continue",
+            "halt",
+            "unhandled",
+            "skipped",
+            "error",
+        ] {
             observer.observe(SlotObservation {
                 slot: "test.slot",
                 phase: "exec",

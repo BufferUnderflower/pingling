@@ -38,15 +38,15 @@ fn real_pingle_hub_wasm_loads_and_exposes_authenticator() {
     };
     let path = PathBuf::from(wasm_path);
     if !path.exists() {
-        eprintln!("SKIP: PINGLE_HUB_WASM path does not exist: {}", path.display());
+        eprintln!(
+            "SKIP: PINGLE_HUB_WASM path does not exist: {}",
+            path.display()
+        );
         return;
     }
 
-    let plugin = PluginAdapter::load(
-        &path,
-        vec!["example.com".to_string()],
-    )
-    .expect("PluginAdapter::load on the real wasm should succeed");
+    let plugin = PluginAdapter::load(&path, vec!["example.com".to_string()])
+        .expect("PluginAdapter::load on the real wasm should succeed");
     eprintln!("loaded plugin: {}", plugin.name());
 
     // Authenticator probe — the wasm exports plugin_authenticator_status so

@@ -75,7 +75,10 @@ fn build_fixture() -> Option<PathBuf> {
         .or_else(|| std::env::var_os("CARGO"))
         .unwrap_or_else(|| OsString::from("cargo"));
 
-    eprintln!("building fixture with cargo = {}", cargo_bin.to_string_lossy());
+    eprintln!(
+        "building fixture with cargo = {}",
+        cargo_bin.to_string_lossy()
+    );
 
     let status = Command::new(&cargo_bin)
         .current_dir(&fixture_dir)
@@ -150,6 +153,17 @@ fn plugin_adapter_round_trips_handle_ipc_against_real_wasm() {
     assert_eq!(result["account_id"], "mock-1");
     assert_eq!(result["wallet"]["balance_units"], 1000);
     assert_eq!(result["features"]["is_mock"], true);
+
+    // -- manifest config: host passes target-os down to wasm --------
+    let result = plugin
+        .handle_ipc("debug.config", &serde_json::Value::Null)
+        .expect("debug.config is claimed")
+        .expect("debug.config returns ok");
+    assert_eq!(
+        result["plugin_target_os"],
+        serde_json::Value::String(std::env::consts::OS.to_string()),
+        "plugin should receive host target OS via extism manifest config"
+    );
 
     // -- handle_ipc: claimed method that returns an error envelope ---
     let err = plugin
@@ -264,14 +278,8 @@ fn plugin_adapter_walks_slot_chain_against_real_wasm() {
     // --- slot that errors in exec — chain should surface VpnError --
     #[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
     struct Empty {}
-    let err = domain::run_slot_chain(
-        plugin.as_ref(),
-        "demo.error",
-        1,
-        "t4",
-        Empty {},
-    )
-    .expect_err("error slot must surface as Err");
+    let err = domain::run_slot_chain(plugin.as_ref(), "demo.error", 1, "t4", Empty {})
+        .expect_err("error slot must surface as Err");
     let msg = err.to_string();
     assert!(
         msg.contains("simulated slot failure"),
@@ -292,4 +300,3 @@ fn plugin_adapter_walks_slot_chain_against_real_wasm() {
         "unclaimed slot must return None so the caller can fall back"
     );
 }
-

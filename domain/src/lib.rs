@@ -41,11 +41,11 @@ pub use traits::{
     NullSlotObserver, OutboundSelectPayload, OutboundTestLatencyPayload, Plugin, Profile,
     ProfileActivatePayload, ProfileMeta, ProfilePersistPayload, ProfileSource, ProfileStorage,
     SettingsStorage, SlotChainResult, SlotContext, SlotObservation, SlotObserver, SlotOutcome,
-    TempConfigPath, VpnConnectPayload, VpnCore, VpnDisconnectPayload,
-    CORE_START_WIRE_VERSION, CORE_STOP_WIRE_VERSION, DAEMON_SHUTDOWN_WIRE_VERSION,
-    DAEMON_STARTUP_WIRE_VERSION, IPC_DISPATCH_WIRE_VERSION, OUTBOUND_SELECT_WIRE_VERSION,
-    OUTBOUND_TEST_LATENCY_WIRE_VERSION, PROFILE_ACTIVATE_WIRE_VERSION,
-    PROFILE_PERSIST_WIRE_VERSION, VPN_CONNECT_WIRE_VERSION, VPN_DISCONNECT_WIRE_VERSION,
+    TempConfigPath, VpnConnectPayload, VpnCore, VpnDisconnectPayload, CORE_START_WIRE_VERSION,
+    CORE_STOP_WIRE_VERSION, DAEMON_SHUTDOWN_WIRE_VERSION, DAEMON_STARTUP_WIRE_VERSION,
+    IPC_DISPATCH_WIRE_VERSION, OUTBOUND_SELECT_WIRE_VERSION, OUTBOUND_TEST_LATENCY_WIRE_VERSION,
+    PROFILE_ACTIVATE_WIRE_VERSION, PROFILE_PERSIST_WIRE_VERSION, VPN_CONNECT_WIRE_VERSION,
+    VPN_DISCONNECT_WIRE_VERSION,
 };
 pub use types::{
     ConnectionInfo, ConnectionState, CoreDescriptor, CoreEvent, CoreInfo, CoreSource, Outbound,

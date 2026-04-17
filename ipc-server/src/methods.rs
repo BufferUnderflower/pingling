@@ -301,9 +301,9 @@ fn call(
                 id: params.id.unwrap_or_default(),
                 name: params.name,
                 core_type: params.core_type,
-                source: params.source.unwrap_or(domain::ProfileSource::Imported {
-                    filename: None,
-                }),
+                source: params
+                    .source
+                    .unwrap_or(domain::ProfileSource::Imported { filename: None }),
                 metadata: params.metadata.unwrap_or_default(),
                 created_at: std::time::SystemTime::now(),
                 last_used_at: None,
@@ -610,4 +610,3 @@ fn outbound_to_json(o: &domain::Outbound) -> Value {
         "metadata": o.metadata,
     })
 }
-

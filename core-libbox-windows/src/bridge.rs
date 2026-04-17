@@ -28,7 +28,8 @@ extern "C" {
     /// non-NULL opaque handle. On failure returns NULL and writes a
     /// heap-allocated error string into `*err` — caller frees with
     /// [`pingle_libbox_free_string`].
-    pub fn pingle_libbox_new_service(cfg_json: *const c_char, err: *mut *mut c_char) -> *mut c_void;
+    pub fn pingle_libbox_new_service(cfg_json: *const c_char, err: *mut *mut c_char)
+        -> *mut c_void;
 
     /// Start the service. Returns 1 on success, 0 on failure (with `*err`
     /// populated). Idempotency is the caller's responsibility.

@@ -117,10 +117,7 @@ mod tests {
             stage: PipelineStage,
             input: ProcessConfigInput,
         ) -> Result<ProcessConfigOutput, PluginError> {
-            self.seen
-                .lock()
-                .unwrap()
-                .push((stage, input.clone()));
+            self.seen.lock().unwrap().push((stage, input.clone()));
             Ok(ProcessConfigOutput {
                 config: input.config,
                 diagnostics: vec![],
@@ -128,12 +125,8 @@ mod tests {
         }
     }
 
-    use crate::protocol::{
-        CoreInfo, PipelineStage as Stage, ProcessConfigAttempt, WIRE_VERSION,
-    };
-    use core_config_processor::{
-        ConnectionStrategy, ResolverType, RetryPolicy, StackType,
-    };
+    use crate::protocol::{CoreInfo, PipelineStage as Stage, ProcessConfigAttempt, WIRE_VERSION};
+    use core_config_processor::{ConnectionStrategy, ResolverType, RetryPolicy, StackType};
     use serde_json::json;
     use std::time::Duration;
 

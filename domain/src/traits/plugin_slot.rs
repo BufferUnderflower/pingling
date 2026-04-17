@@ -169,23 +169,17 @@ pub enum SlotOutcome<P> {
 
     /// Phase returns a possibly-modified payload. Chain continues
     /// with this payload as the next phase's input.
-    Continue {
-        payload: P,
-    },
+    Continue { payload: P },
 
     /// Phase short-circuits the chain. Later phases are skipped; the
     /// caller uses this payload as the final result of the whole
     /// slot invocation.
-    Halt {
-        payload: P,
-    },
+    Halt { payload: P },
 
     /// Phase recognized the slot but ran into a recoverable error.
     /// Chain terminates; the caller surfaces the error message to its
     /// own caller.
-    Error {
-        message: String,
-    },
+    Error { message: String },
 
     /// Plugin doesn't claim this phase. Host advances to the next
     /// phase as if the plugin weren't registered for it. Equivalent
@@ -391,9 +385,7 @@ where
             // Plugin returned a JSON blob — parse as SlotOutcome.
             Some(Ok(raw)) => {
                 let outcome: SlotOutcome<P> = serde_json::from_value(raw).map_err(|e| {
-                    VpnError::Unknown(format!(
-                        "slot {slot}.{phase_name}: parse outcome: {e}"
-                    ))
+                    VpnError::Unknown(format!("slot {slot}.{phase_name}: parse outcome: {e}"))
                 })?;
                 match outcome {
                     SlotOutcome::Unhandled => {
@@ -428,7 +420,8 @@ where
                         payload = new_payload;
                         // Re-serialize the new payload so observers
                         // see the post-phase view.
-                        let new_json = serde_json::to_value(&payload).unwrap_or(serde_json::Value::Null);
+                        let new_json =
+                            serde_json::to_value(&payload).unwrap_or(serde_json::Value::Null);
                         observer.observe(SlotObservation {
                             slot,
                             phase: phase_name,
@@ -443,7 +436,8 @@ where
                     SlotOutcome::Halt {
                         payload: final_payload,
                     } => {
-                        let final_json = serde_json::to_value(&final_payload).unwrap_or(serde_json::Value::Null);
+                        let final_json =
+                            serde_json::to_value(&final_payload).unwrap_or(serde_json::Value::Null);
                         observer.observe(SlotObservation {
                             slot,
                             phase: phase_name,
@@ -617,11 +611,7 @@ mod tests {
 
     #[test]
     fn unhandled_variant_is_equivalent_to_none() {
-        let plug = RecordingPlugin::new(vec![
-            Some(Ok(outcome_unhandled())),
-            None,
-            None,
-        ]);
+        let plug = RecordingPlugin::new(vec![Some(Ok(outcome_unhandled())), None, None]);
         let result = run_slot_chain(&plug, "s", 1, "inv", Pay { n: 3 });
         assert_eq!(result.unwrap(), None);
     }
@@ -642,9 +632,9 @@ mod tests {
     #[test]
     fn mixed_phases_produce_final_payload() {
         let plug = RecordingPlugin::new(vec![
-            None,                                 // before skipped
-            Some(Ok(outcome_continue(50))),       // exec transforms
-            Some(Ok(outcome_unchanged())),        // after observes
+            None,                           // before skipped
+            Some(Ok(outcome_continue(50))), // exec transforms
+            Some(Ok(outcome_unchanged())),  // after observes
         ]);
         let result = run_slot_chain(&plug, "s", 1, "inv", Pay { n: 1 });
         assert_eq!(result.unwrap(), Some(Pay { n: 50 }));

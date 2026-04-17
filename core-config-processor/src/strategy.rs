@@ -107,9 +107,7 @@ impl RetryPolicy {
             } => {
                 let exponent = next_attempt - 2;
                 let multiplier = 1u32.checked_shl(exponent).unwrap_or(u32::MAX);
-                let proposed = initial_delay
-                    .checked_mul(multiplier)
-                    .unwrap_or(*max_delay);
+                let proposed = initial_delay.checked_mul(multiplier).unwrap_or(*max_delay);
                 proposed.min(*max_delay)
             }
         }

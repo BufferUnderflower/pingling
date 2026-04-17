@@ -82,7 +82,11 @@ pub enum DeeplinkResolution {
     /// it and optionally activates + connects per `next_action`.
     Profile {
         name: String,
-        #[serde(rename = "coreType", alias = "core_type", default = "default_core_type")]
+        #[serde(
+            rename = "coreType",
+            alias = "core_type",
+            default = "default_core_type"
+        )]
         core_type: String,
         config: String,
         #[serde(default)]
@@ -301,10 +305,7 @@ pub struct DeeplinkResolvePayload {
 /// (wire, serde, or explicit) is converted to
 /// [`DeeplinkResolution::Unhandled`] so the built-in resolver gets a
 /// chance — plugins should NEVER break the deeplink path.
-pub fn plugin_resolve(
-    vpn: &VpnManager,
-    req: &DeeplinkRequest,
-) -> Option<DeeplinkResolution> {
+pub fn plugin_resolve(vpn: &VpnManager, req: &DeeplinkRequest) -> Option<DeeplinkResolution> {
     let plugin = vpn.plugin()?;
     let install_id = vpn.install_id().unwrap_or_default();
 
@@ -453,9 +454,7 @@ pub fn apply_resolution(
                         Err(e) => Ok(DeeplinkOutcome {
                             kind: "profile_activated".into(),
                             profile_id: Some(id),
-                            message: format!(
-                                "{base_message} (activated, connect failed: {e})"
-                            ),
+                            message: format!("{base_message} (activated, connect failed: {e})"),
                         }),
                     }
                 }

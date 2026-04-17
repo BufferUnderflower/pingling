@@ -49,46 +49,50 @@ impl ConnectHandler {
 
 impl Handler<OpConnect> for ConnectHandler {
     fn handle(&self, input: ConnectInput) -> Result<ConnectOutput, VpnError> {
-        // Resolve the config path. Profile storage wins when it has an
-        // active profile; otherwise fall back to the legacy input path.
+        // Resolve the config path. A pre-populated pipeline input wins:
+        // VpnManager may already have prepared an active-profile temp file
+        // before middleware ran. If the input is empty, fall back to the
+        // profile store and then the legacy input path.
         //
         // The `TempConfigPath` returned by the storage is stashed in a
         // shared `Arc<Mutex<_>>` slot so the disconnect handler can
         // drop it (and delete the temp file) when the core stops.
-        let resolved_path: String = match self.profile_storage.as_ref() {
-            Some(storage) => match storage.load_active_for_core_start() {
-                Ok(temp) => {
-                    let path = temp.path().to_string_lossy().into_owned();
-                    info!(
-                        "connect: using active profile's decrypted config at {}",
+        let resolved_path: String = if !input.config_path.is_empty() {
+            input.config_path.clone()
+        } else {
+            match self.profile_storage.as_ref() {
+                Some(storage) => match storage.load_active_for_core_start() {
+                    Ok(temp) => {
+                        let path = temp.path().to_string_lossy().into_owned();
+                        info!(
+                            "connect: using active profile's decrypted config at {}",
+                            path
+                        );
+                        *self
+                            .active_temp_config
+                            .lock()
+                            .unwrap_or_else(|e| e.into_inner()) = Some(temp);
                         path
-                    );
-                    // Park the RAII handle so the temp file stays on
-                    // disk until disconnect.
-                    *self
-                        .active_temp_config
-                        .lock()
-                        .unwrap_or_else(|e| e.into_inner()) = Some(temp);
-                    path
-                }
-                Err(VpnError::NotConnected) => {
+                    }
+                    Err(VpnError::NotConnected) => {
+                        info!(
+                            "connect: no active profile, falling back to legacy config_path: {}",
+                            input.config_path
+                        );
+                        input.config_path.clone()
+                    }
+                    Err(e) => {
+                        warn!("connect: profile storage failed to load active: {e}");
+                        return Err(e);
+                    }
+                },
+                None => {
                     info!(
-                        "connect: no active profile, falling back to legacy config_path: {}",
+                        "connect: no profile storage wired, using legacy config_path: {}",
                         input.config_path
                     );
                     input.config_path.clone()
                 }
-                Err(e) => {
-                    warn!("connect: profile storage failed to load active: {e}");
-                    return Err(e);
-                }
-            },
-            None => {
-                info!(
-                    "connect: no profile storage wired, using legacy config_path: {}",
-                    input.config_path
-                );
-                input.config_path.clone()
             }
         };
 

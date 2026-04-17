@@ -129,10 +129,7 @@ impl Watcher for NetwatcherBackend {
     fn subscribe(&self) -> Result<Receiver<UpdateEvent>, String> {
         self.ensure_started()?;
         let (tx, rx) = mpsc::channel();
-        self.subs
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .push(tx);
+        self.subs.lock().unwrap_or_else(|e| e.into_inner()).push(tx);
         Ok(rx)
     }
 }

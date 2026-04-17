@@ -220,6 +220,12 @@ pub struct VpnManager {
     /// trait object so tests can mock them independently.
     install_id_provider: Option<Arc<dyn InstallIdProvider>>,
 
+    /// Shared temp-config slot for active-profile connects. Kept at the
+    /// manager level so `connect()` and `restart()` can prepare a
+    /// profile-backed config path before middleware runs, while the
+    /// disconnect handler still owns dropping the file on stop.
+    active_temp_config: Arc<Mutex<Option<TempConfigPath>>>,
+
     /// Optional slot-chain observer. When `Some`, every slot dispatch
     /// (`slot.vpn.connect.*`, `slot.vpn.disconnect.*`, etc.) flows
     /// through the observer so it can log and broadcast IPC events.
@@ -275,6 +281,7 @@ impl VpnManager {
             plugin: Mutex::new(None),
             profile_storage: None,
             install_id_provider: None,
+            active_temp_config: active_temp_config.clone(),
             slot_observer: Mutex::new(None),
             registry,
             storage,
@@ -291,10 +298,7 @@ impl VpnManager {
     /// typically wraps the manager in `Arc` before the broadcaster
     /// is available, and can't easily consume `self` afterwards.
     pub fn set_slot_observer(&self, observer: Arc<dyn domain::SlotObserver>) {
-        let mut guard = self
-            .slot_observer
-            .lock()
-            .unwrap_or_else(|e| e.into_inner());
+        let mut guard = self.slot_observer.lock().unwrap_or_else(|e| e.into_inner());
         *guard = Some(observer);
     }
 
@@ -329,10 +333,7 @@ impl VpnManager {
         };
         drop(guard);
 
-        let observer_guard = self
-            .slot_observer
-            .lock()
-            .unwrap_or_else(|e| e.into_inner());
+        let observer_guard = self.slot_observer.lock().unwrap_or_else(|e| e.into_inner());
         let observer = observer_guard.as_ref().cloned();
         drop(observer_guard);
 
@@ -377,10 +378,11 @@ impl VpnManager {
         ))));
         self.disconnect = Mutex::new(Pipeline::new(Box::new(DisconnectHandler::new(
             self.registry.clone(),
-            active_temp_config,
+            active_temp_config.clone(),
         ))));
         self.profile_storage = Some(profile_storage);
         self.install_id_provider = Some(install_id_provider);
+        self.active_temp_config = active_temp_config;
         self
     }
 
@@ -609,10 +611,29 @@ impl VpnManager {
             })
     }
 
+    fn prepare_connect_config_path(&self) -> Result<String, VpnError> {
+        if let Some(storage) = self.profile_storage() {
+            match storage.load_active_for_core_start() {
+                Ok(temp) => {
+                    let path = temp.path().to_string_lossy().into_owned();
+                    *self
+                        .active_temp_config
+                        .lock()
+                        .unwrap_or_else(|e| e.into_inner()) = Some(temp);
+                    return Ok(path);
+                }
+                Err(VpnError::NotConnected) => {}
+                Err(error) => return Err(error),
+            }
+        }
+
+        self.get_config_path()
+    }
+
     // -- lifecycle operations -----------------------------------------------
 
     pub fn connect(&self) -> Result<(), VpnError> {
-        let config_path = self.get_config_path()?;
+        let config_path = self.prepare_connect_config_path()?;
         let core_type = self.active_core_type_str();
         let input = ConnectInput {
             config_path: config_path.clone(),
@@ -670,10 +691,7 @@ impl VpnManager {
         slot_payload.result = Some(domain::ConnectResult {
             started: pipeline_result.is_ok(),
             duration_ms,
-            error: pipeline_result
-                .as_ref()
-                .err()
-                .map(|e| e.to_string()),
+            error: pipeline_result.as_ref().err().map(|e| e.to_string()),
         });
         // After-fire is best-effort: any plugin error here becomes a
         // debug log, not a failure cause for the connect itself
@@ -728,10 +746,7 @@ impl VpnManager {
         slot_payload.result = Some(domain::DisconnectResult {
             stopped: pipeline_result.is_ok(),
             duration_ms,
-            error: pipeline_result
-                .as_ref()
-                .err()
-                .map(|e| e.to_string()),
+            error: pipeline_result.as_ref().err().map(|e| e.to_string()),
         });
         let _ = self.run_slot(
             domain::slot_names::VPN_DISCONNECT,
@@ -752,7 +767,7 @@ impl VpnManager {
     }
 
     pub fn restart(&self) -> Result<(), VpnError> {
-        let config_path = self.get_config_path()?;
+        let config_path = self.prepare_connect_config_path()?;
         let input = RestartInput {
             config_path,
             core_type: self.active_core_type_str(),
@@ -1432,10 +1447,7 @@ mod tests {
         }
 
         fn clear_active(&self) -> Result<(), VpnError> {
-            self.inner
-                .lock()
-                .unwrap_or_else(|e| e.into_inner())
-                .active = None;
+            self.inner.lock().unwrap_or_else(|e| e.into_inner()).active = None;
             Ok(())
         }
 
@@ -1562,6 +1574,33 @@ mod tests {
         (mgr, recorded, profile_storage)
     }
 
+    fn manager_with_recording_core_and_profile_no_legacy_config() -> (
+        VpnManager,
+        Arc<Mutex<Option<String>>>,
+        Arc<TestProfileStorage>,
+    ) {
+        let (core, recorded) = RecordingCore::new();
+        let mut reg = CoreRegistry::new();
+        reg.register(
+            CoreDescriptor {
+                core_type: "recording".into(),
+                display_name: "Recording".into(),
+                source: CoreSource::Mocked,
+                binary_path: None,
+                available: true,
+            },
+            Box::new(core),
+        );
+
+        let profile_storage = Arc::new(TestProfileStorage::new());
+        let id_provider: Arc<dyn InstallIdProvider> = Arc::new(TestInstallIdProvider {
+            id: "test-install-id".into(),
+        });
+        let mgr = VpnManager::new(reg, Box::new(MemorySettingsStorage::new()))
+            .with_profile_storage(profile_storage.clone(), id_provider);
+        (mgr, recorded, profile_storage)
+    }
+
     fn sample_profile(name: &str) -> Profile {
         Profile {
             id: String::new(),
@@ -1605,6 +1644,27 @@ mod tests {
         mgr.connect().unwrap();
         let path = recorded.lock().unwrap().clone().unwrap();
         assert_eq!(path, "/legacy/path.json");
+    }
+
+    #[test]
+    fn connect_works_with_active_profile_without_legacy_config_path() {
+        let (mgr, recorded, store) = manager_with_recording_core_and_profile_no_legacy_config();
+        let p = store
+            .put(sample_profile("Home"), r#"{"key":"value"}"#)
+            .unwrap();
+        store.set_active(&p.id).unwrap();
+
+        mgr.connect().unwrap();
+
+        let path = recorded
+            .lock()
+            .unwrap()
+            .clone()
+            .expect("core.start was called");
+        assert!(
+            path.contains("pingle-test-profile") && path.contains(&p.id),
+            "expected profile temp path, got: {path}"
+        );
     }
 
     #[test]
@@ -1653,7 +1713,10 @@ mod tests {
         assert_eq!(list.len(), 1);
 
         mgr.set_active_profile(&p.id).unwrap();
-        assert_eq!(mgr.active_profile().unwrap().as_deref(), Some(p.id.as_str()));
+        assert_eq!(
+            mgr.active_profile().unwrap().as_deref(),
+            Some(p.id.as_str())
+        );
 
         mgr.delete_profile(&p.id).unwrap();
         assert!(mgr.active_profile().unwrap().is_none());
@@ -1683,9 +1746,6 @@ mod tests {
     #[test]
     fn install_id_errors_when_provider_not_configured() {
         let mgr = manager_with_config();
-        assert!(matches!(
-            mgr.install_id(),
-            Err(VpnError::StorageError(_))
-        ));
+        assert!(matches!(mgr.install_id(), Err(VpnError::StorageError(_))));
     }
 }

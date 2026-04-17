@@ -25,9 +25,7 @@
 //! See `crate::lib::stub-fallback` for the rationale.
 
 use crate::bridge;
-use domain::{
-    ConnectionState, CoreEvent, CoreInfo, PrerequisiteCheck, VpnCore, VpnError,
-};
+use domain::{ConnectionState, CoreEvent, CoreInfo, PrerequisiteCheck, VpnCore, VpnError};
 #[cfg(not(libbox_stub))]
 use log::info;
 use std::ffi::CString;
@@ -268,9 +266,8 @@ impl VpnCore for LibboxCoreWindows {
             return vec![PrerequisiteCheck {
                 name: "libbox.dll".into(),
                 passed: false,
-                message:
-                    "libbox.dll not built / not found — see core-libbox-windows/README.md"
-                        .into(),
+                message: "libbox.dll not built / not found — see core-libbox-windows/README.md"
+                    .into(),
             }];
         }
 

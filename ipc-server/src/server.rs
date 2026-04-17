@@ -65,7 +65,6 @@ pub fn start_with_broadcaster(
     vpn: Arc<VpnManager>,
     broadcaster: Arc<EventBroadcaster>,
 ) -> io::Result<ServerHandle> {
-
     // ----- UDS listener (best-effort, unix-only) ---------------------------
     #[cfg(unix)]
     let (uds_path, uds_path_str, uds_started) = {
@@ -112,7 +111,11 @@ pub fn start_with_broadcaster(
         })?;
     let bound_addr = tcp_listener.local_addr()?;
     let tcp_addr = format!("localhost:{}", bound_addr.port());
-    log::info!("ipc: TCP listening at {} (bound to {})", tcp_addr, bound_addr);
+    log::info!(
+        "ipc: TCP listening at {} (bound to {})",
+        tcp_addr,
+        bound_addr
+    );
     spawn_tcp_loop(tcp_listener, vpn.clone(), broadcaster.clone());
 
     // ----- Discovery: registry file + UDP beacon ---------------------------
@@ -804,7 +807,9 @@ mod tests {
 
     fn build_vpn_with_plugin() -> Arc<VpnManager> {
         let vpn = build_vpn();
-        vpn.set_plugin(Arc::new(StubPlugin { auth: StubAuthCache }));
+        vpn.set_plugin(Arc::new(StubPlugin {
+            auth: StubAuthCache,
+        }));
         vpn
     }
 

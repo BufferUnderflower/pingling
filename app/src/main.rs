@@ -232,9 +232,7 @@ fn build_registry(cfg: &PinglingConfig) -> CoreRegistry {
         let core = core_libbox_windows::LibboxCoreWindows::new();
         let prereqs = core.check_prerequisites();
         let available = prereqs.iter().all(|c| c.passed);
-        log::info!(
-            "registering libbox-windows core (available: {available})"
-        );
+        log::info!("registering libbox-windows core (available: {available})");
         registry.register(
             domain::CoreDescriptor {
                 core_type: "libbox".into(),
@@ -255,8 +253,7 @@ fn build_registry(cfg: &PinglingConfig) -> CoreRegistry {
         } else {
             cfg.core_binary_path.clone()
         };
-        let available =
-            !binary_path.is_empty() && std::path::Path::new(&binary_path).exists();
+        let available = !binary_path.is_empty() && std::path::Path::new(&binary_path).exists();
 
         if available {
             log::info!("registering sing-box subprocess core at: {binary_path}");
@@ -545,12 +542,10 @@ fn main() {
                 Ok(store) => {
                     log::info!("profile store: initialized at OS config dir");
                     let store = std::sync::Arc::new(store);
-                    Arc::new(
-                        vpn_base.with_profile_storage(
-                            store.clone() as std::sync::Arc<dyn domain::ProfileStorage>,
-                            store as std::sync::Arc<dyn domain::InstallIdProvider>,
-                        ),
-                    )
+                    Arc::new(vpn_base.with_profile_storage(
+                        store.clone() as std::sync::Arc<dyn domain::ProfileStorage>,
+                        store as std::sync::Arc<dyn domain::InstallIdProvider>,
+                    ))
                 }
                 Err(e) => {
                     log::warn!(
@@ -660,11 +655,7 @@ fn main() {
                         log::info!("deeplink: handling {}", url_str);
                         match ipc::deeplink::handle_deeplink(&dl_vpn, &url_str) {
                             Ok(outcome) => {
-                                log::info!(
-                                    "deeplink: {} ({})",
-                                    outcome.kind,
-                                    outcome.message
-                                );
+                                log::info!("deeplink: {} ({})", outcome.kind, outcome.message);
                                 // Push to IPC subscribers so GUI clients
                                 // can react (e.g. show a toast).
                                 if let Ok(payload) = serde_json::to_value(&outcome) {
@@ -951,7 +942,10 @@ mod tests {
     fn resolve_plugins_dir_uses_explicit_when_present() {
         let cfg = cfg_with_plugins_dir(std::path::Path::new("/tmp/explicit/pingle/plugins"));
         let resolved = resolve_plugins_dir(&cfg).expect("explicit dir always resolves");
-        assert_eq!(resolved, std::path::PathBuf::from("/tmp/explicit/pingle/plugins"));
+        assert_eq!(
+            resolved,
+            std::path::PathBuf::from("/tmp/explicit/pingle/plugins")
+        );
     }
 
     #[test]

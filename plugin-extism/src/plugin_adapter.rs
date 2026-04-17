@@ -40,7 +40,7 @@
 //! shape (one call per user action) the encoding cost is invisible
 //! next to the network round trip.
 
-use crate::{ExtismPlugin, LoadOptions};
+use crate::{default_plugin_runtime_config, ExtismPlugin, LoadOptions};
 use domain::{Authenticator, Plugin, VpnError};
 use log::warn;
 use serde::{Deserialize, Serialize};
@@ -95,6 +95,7 @@ impl PluginAdapter {
     pub fn load(path: &Path, allowed_hosts: Vec<String>) -> Result<Arc<dyn Plugin>, String> {
         let opts = LoadOptions {
             allowed_hosts,
+            config: default_plugin_runtime_config(),
             timeout_ms: Some(30_000),
         };
         let plugin = ExtismPlugin::load_with_options(path, opts)?;

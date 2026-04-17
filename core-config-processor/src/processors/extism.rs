@@ -155,11 +155,7 @@ impl ExtismProcessorAdapter {
     /// name and parse the result with the pre-slot tagged enum.
     /// Called only when the slot chain returned `None` (plugin
     /// didn't claim any phase).
-    fn process_via_legacy(
-        &self,
-        config: Value,
-        request: &ConfigRequest,
-    ) -> Result<Value, String> {
+    fn process_via_legacy(&self, config: Value, request: &ConfigRequest) -> Result<Value, String> {
         let params = json!({
             "config": config,
             "request": request,
@@ -173,13 +169,10 @@ impl ExtismProcessorAdapter {
                 // processing.
                 Ok(config)
             }
-            Some(Err(err)) => Err(format!(
-                "{}: plugin handle_ipc failed: {err}",
-                self.name
-            )),
+            Some(Err(err)) => Err(format!("{}: plugin handle_ipc failed: {err}", self.name)),
             Some(Ok(raw)) => {
-                let parsed: LegacyConfigProcessResponse = serde_json::from_value(raw)
-                    .map_err(|e| {
+                let parsed: LegacyConfigProcessResponse =
+                    serde_json::from_value(raw).map_err(|e| {
                         format!("{}: malformed config.process response: {e}", self.name)
                     })?;
                 match parsed {
@@ -187,10 +180,9 @@ impl ExtismProcessorAdapter {
                         Ok(new_config)
                     }
                     LegacyConfigProcessResponse::Unchanged => Ok(config),
-                    LegacyConfigProcessResponse::Error { message } => Err(format!(
-                        "{}: plugin reported error: {message}",
-                        self.name
-                    )),
+                    LegacyConfigProcessResponse::Error { message } => {
+                        Err(format!("{}: plugin reported error: {message}", self.name))
+                    }
                 }
             }
         }
@@ -258,9 +250,7 @@ mod tests {
     }
 
     impl ScriptedPlugin {
-        fn new(
-            responses: Vec<(&'static str, Option<Result<Value, VpnError>>)>,
-        ) -> Self {
+        fn new(responses: Vec<(&'static str, Option<Result<Value, VpnError>>)>) -> Self {
             let mut map = std::collections::HashMap::new();
             for (k, v) in responses {
                 map.insert(k.to_string(), v);
@@ -285,11 +275,7 @@ mod tests {
             None
         }
 
-        fn handle_ipc(
-            &self,
-            method: &str,
-            params: &Value,
-        ) -> Option<Result<Value, VpnError>> {
+        fn handle_ipc(&self, method: &str, params: &Value) -> Option<Result<Value, VpnError>> {
             self.calls
                 .lock()
                 .unwrap()

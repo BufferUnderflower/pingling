@@ -40,9 +40,7 @@
 
 use aes_gcm::aead::{Aead, KeyInit};
 use aes_gcm::{Aes256Gcm, Nonce};
-use domain::{
-    InstallIdProvider, Profile, ProfileMeta, ProfileStorage, TempConfigPath, VpnError,
-};
+use domain::{InstallIdProvider, Profile, ProfileMeta, ProfileStorage, TempConfigPath, VpnError};
 use rand::RngCore;
 use std::fs;
 use std::io::Write;
@@ -201,9 +199,8 @@ impl EncryptedProfileStore {
             .and_then(|_| f.sync_all())
             .map_err(|e| VpnError::StorageError(format!("write body tmp: {e}")))?;
         drop(f);
-        fs::rename(&tmp, &path).map_err(|e| {
-            VpnError::StorageError(format!("rename body {}: {e}", path.display()))
-        })?;
+        fs::rename(&tmp, &path)
+            .map_err(|e| VpnError::StorageError(format!("rename body {}: {e}", path.display())))?;
         Ok(())
     }
 
@@ -613,9 +610,19 @@ mod tests {
     fn set_active_updates_last_used_at() {
         let (_dir, store) = make_store();
         let p = store.put(sample_profile("Home"), "{}").unwrap();
-        assert!(store.get_meta(&p.id).unwrap().unwrap().last_used_at.is_none());
+        assert!(store
+            .get_meta(&p.id)
+            .unwrap()
+            .unwrap()
+            .last_used_at
+            .is_none());
         store.set_active(&p.id).unwrap();
-        assert!(store.get_meta(&p.id).unwrap().unwrap().last_used_at.is_some());
+        assert!(store
+            .get_meta(&p.id)
+            .unwrap()
+            .unwrap()
+            .last_used_at
+            .is_some());
     }
 
     #[test]

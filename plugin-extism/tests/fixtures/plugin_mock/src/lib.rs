@@ -26,6 +26,9 @@
 //! pre-slot-convention vocabulary. The daemon now prefers the slot
 //! chain but keeps these working for tests + migration.
 //!
+//! `debug.config` — returns selected plugin config values so the host
+//! adapter tests can prove manifest config reaches wasm.
+//!
 //! ## Slot chain method names (new)
 //!
 //! | Method                         | Outcome                                       |
@@ -128,6 +131,14 @@ pub fn plugin_handle_ipc(input: String) -> FnResult<String> {
             "wallet": {"balance_units": 1000, "currency": "USD"},
             "features": {"is_mock": true},
         })),
+        "debug.config" => {
+            let plugin_target_os = config::get("plugin_target_os")
+                .ok()
+                .flatten();
+            HandleOutput::ok(serde_json::json!({
+                "plugin_target_os": plugin_target_os,
+            }))
+        }
 
         // Deliberately failing endpoint to exercise the error envelope.
         "auth.fail" => HandleOutput::err("simulated failure from plugin_mock"),

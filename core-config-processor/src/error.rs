@@ -107,7 +107,13 @@ pub fn classify_error(err: &VpnError) -> PreviousError {
         _ if contains_any(&lower, &["http"]) => ErrorKind::HttpError,
         _ if contains_any(
             &lower,
-            &["tun ", "/dev/net/tun", "wintun", "tap adapter", "adapter create"],
+            &[
+                "tun ",
+                "/dev/net/tun",
+                "wintun",
+                "tap adapter",
+                "adapter create",
+            ],
         ) =>
         {
             ErrorKind::TunDevice
@@ -170,8 +176,7 @@ mod tests {
 
     #[test]
     fn classifies_dns_failure_from_text() {
-        let err =
-            VpnError::ProcessStartFailed("lookup example.com: no such host".into());
+        let err = VpnError::ProcessStartFailed("lookup example.com: no such host".into());
         assert_eq!(classify_error(&err).kind, ErrorKind::DnsFailure);
     }
 
