@@ -44,7 +44,9 @@ use crate::{default_plugin_runtime_config, ExtismPlugin, LoadOptions};
 use domain::{Authenticator, Plugin, VpnError};
 use log::warn;
 use serde::{Deserialize, Serialize};
+use std::fs;
 use std::path::Path;
+use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
 /// The single required wasm export. Anything missing this export is
@@ -55,6 +57,9 @@ const REQUIRED_FUNCTION: &str = "plugin_handle_ipc";
 /// [`Authenticator`] sub-interface; if absent, [`Plugin::authenticator`]
 /// returns `None`.
 const OPTIONAL_AUTHENTICATOR_FUNCTION: &str = "plugin_authenticator_status";
+const SESSION_STORE_ENV: &str = "PINGLE_PLUGIN_SESSION_STATE_DIR";
+const SESSION_STORE_CONFIG_KEY: &str = "plugin_session_store_path";
+const SESSION_STORE_GUEST_ROOT: &str = "/pingle/plugin-state";
 
 /// Inspects a `.wasm` file and returns `true` if it appears to
 /// implement the plugin contract (exports `plugin_handle_ipc`).
@@ -93,9 +98,26 @@ impl PluginAdapter {
     /// `extism_pdk::http::request` calls can reach them; without
     /// this every HTTPS call from inside wasm fails.
     pub fn load(path: &Path, allowed_hosts: Vec<String>) -> Result<Arc<dyn Plugin>, String> {
+        let name = path
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .unwrap_or("unknown")
+            .to_string();
+        let (host_state_dir, guest_state_dir, session_store_path) =
+            resolve_session_state_paths(&name)?;
         let opts = LoadOptions {
             allowed_hosts,
-            config: default_plugin_runtime_config(),
+            config: default_plugin_runtime_config()
+                .into_iter()
+                .chain(std::iter::once((
+                    SESSION_STORE_CONFIG_KEY.to_string(),
+                    session_store_path,
+                )))
+                .collect(),
+            allowed_paths: vec![(
+                host_state_dir.to_string_lossy().to_string(),
+                guest_state_dir,
+            )],
             timeout_ms: Some(30_000),
         };
         let plugin = ExtismPlugin::load_with_options(path, opts)?;
@@ -141,6 +163,58 @@ impl PluginAdapter {
                 None
             }
         }
+    }
+}
+
+fn resolve_session_state_paths(
+    plugin_name: &str,
+) -> Result<(PathBuf, PathBuf, String), String> {
+    let host_root = resolve_plugin_state_root()?;
+    let host_dir = host_root.join(plugin_name);
+    fs::create_dir_all(&host_dir)
+        .map_err(|e| format!("create plugin session state dir {}: {e}", host_dir.display()))?;
+
+    let guest_dir = PathBuf::from(format!("{SESSION_STORE_GUEST_ROOT}/{plugin_name}"));
+    let session_store_path = guest_dir.join("session.json").to_string_lossy().to_string();
+    Ok((host_dir, guest_dir, session_store_path))
+}
+
+fn resolve_plugin_state_root() -> Result<PathBuf, String> {
+    if let Some(override_root) = std::env::var_os(SESSION_STORE_ENV)
+        .map(PathBuf::from)
+        .filter(|path| !path.as_os_str().is_empty())
+    {
+        return Ok(override_root);
+    }
+
+    #[cfg(target_os = "macos")]
+    {
+        let home = std::env::var_os("HOME")
+            .ok_or_else(|| "HOME is not set".to_string())?;
+        return Ok(PathBuf::from(home)
+            .join("Library")
+            .join("Application Support")
+            .join("pingle")
+            .join("plugin-state"));
+    }
+
+    #[cfg(target_os = "windows")]
+    {
+        let appdata = std::env::var_os("APPDATA")
+            .ok_or_else(|| "APPDATA is not set".to_string())?;
+        return Ok(PathBuf::from(appdata).join("pingle").join("plugin-state"));
+    }
+
+    #[cfg(not(any(target_os = "macos", target_os = "windows")))]
+    {
+        let xdg = std::env::var_os("XDG_CONFIG_HOME");
+        let home = std::env::var_os("HOME");
+        let base = xdg
+            .filter(|value| !value.is_empty())
+            .map(PathBuf::from)
+            .or_else(|| home.filter(|value| !value.is_empty()).map(PathBuf::from).map(|p| p.join(".config")))
+            .ok_or_else(|| "neither XDG_CONFIG_HOME nor HOME is set".to_string())?;
+        return Ok(base.join("pingle").join("plugin-state"));
     }
 }
 

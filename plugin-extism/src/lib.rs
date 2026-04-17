@@ -68,7 +68,7 @@ use domain::pipeline::Hook;
 use domain::VpnError;
 use extism::{Manifest, Plugin, PluginBuilder, Wasm};
 use log::{debug, info, warn};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
 // ---------------------------------------------------------------------------
@@ -107,6 +107,12 @@ pub struct LoadOptions {
     /// Static manifest config exposed to the plugin runtime.
     /// Used for host facts and policy defaults such as target OS.
     pub config: Vec<(String, String)>,
+    /// WASI-mounted host paths made available to the plugin.
+    ///
+    /// The map key is the host path, the value is the guest-visible
+    /// mount point. This is used for small plugin-owned persistence
+    /// artifacts such as cached auth sessions.
+    pub allowed_paths: Vec<(String, PathBuf)>,
     /// Per-call wall-clock timeout in milliseconds. None = use the
     /// extism default (~30s as of 1.21).
     pub timeout_ms: Option<u64>,
@@ -142,6 +148,9 @@ impl ExtismPlugin {
         }
         if !opts.config.is_empty() {
             manifest = manifest.with_config(opts.config.clone().into_iter());
+        }
+        if !opts.allowed_paths.is_empty() {
+            manifest = manifest.with_allowed_paths(opts.allowed_paths.clone().into_iter());
         }
         if let Some(ms) = opts.timeout_ms {
             manifest = manifest.with_timeout(std::time::Duration::from_millis(ms));
@@ -251,9 +260,7 @@ fn build_plugin(manifest: Manifest, name: &str) -> Result<Plugin, String> {
         info!("loading extism plugin {name} with Wasmtime target {target}");
         builder = builder.with_wasmtime_config(config);
     }
-    builder
-        .build()
-        .map_err(|e| format!("load {name}: {e:#}"))
+    builder.build().map_err(|e| format!("load {name}: {e:#}"))
 }
 
 fn configured_wasmtime_target() -> Option<String> {
@@ -270,7 +277,10 @@ fn resolve_wasmtime_target_override(
     _os: &str,
     _arch: &str,
 ) -> Option<String> {
-    match raw_override.map(str::trim).filter(|value| !value.is_empty()) {
+    match raw_override
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
         Some("native") => None,
         Some(target) => Some(target.to_string()),
         None => None,
@@ -640,7 +650,10 @@ mod runtime_tests {
 
     #[test]
     fn non_macos_stays_native_by_default() {
-        assert_eq!(resolve_wasmtime_target_override(None, "linux", "x86_64"), None);
+        assert_eq!(
+            resolve_wasmtime_target_override(None, "linux", "x86_64"),
+            None
+        );
         assert_eq!(
             resolve_wasmtime_target_override(None, "windows", "x86_64"),
             None
