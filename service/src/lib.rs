@@ -35,7 +35,7 @@ pub mod plugins;
 use domain::ops::*;
 use domain::pipeline::Pipeline;
 use domain::{
-    ConnectionState, CoreDescriptor, CoreInfo, CoreSource, InstallIdProvider, Plugin,
+    ConnectionState, CoreDescriptor, CoreEvent, CoreInfo, CoreSource, InstallIdProvider, Plugin,
     PrerequisiteCheck, Profile, ProfileMeta, ProfileStorage, SettingsStorage, TempConfigPath,
     VpnCore, VpnError,
 };
@@ -831,6 +831,11 @@ impl VpnManager {
             Some(core) => core.check_prerequisites(),
             None => vec![],
         }
+    }
+
+    pub fn subscribe_active_core_events(&self) -> Option<std::sync::mpsc::Receiver<CoreEvent>> {
+        let mut registry = self.registry.lock().unwrap_or_else(|e| e.into_inner());
+        registry.active_core().and_then(|core| core.subscribe())
     }
 
     // -- capability operations (pipeline-gated) -----------------------------

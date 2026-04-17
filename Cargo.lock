@@ -829,12 +829,24 @@ dependencies = [
 ]
 
 [[package]]
+name = "core-libbox-macos"
+version = "0.1.0"
+dependencies = [
+ "cc",
+ "core-config-processor",
+ "domain",
+ "log",
+ "serde_json",
+]
+
+[[package]]
 name = "core-libbox-windows"
 version = "0.1.0"
 dependencies = [
  "core-config-processor",
  "domain",
  "log",
+ "pingle-netwatch",
  "serde_json",
 ]
 
@@ -2574,6 +2586,7 @@ name = "ipc-server"
 version = "0.1.0"
 dependencies = [
  "base64 0.22.1",
+ "core-libbox-macos",
  "core-libbox-windows",
  "core-mock",
  "data",
@@ -2586,6 +2599,7 @@ dependencies = [
  "serde",
  "serde_json",
  "service",
+ "tempfile",
 ]
 
 [[package]]

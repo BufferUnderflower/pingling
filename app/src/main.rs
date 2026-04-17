@@ -231,7 +231,7 @@ fn build_registry(cfg: &PinglingConfig) -> CoreRegistry {
     {
         let core = core_libbox_windows::LibboxCoreWindows::new();
         let prereqs = core.check_prerequisites();
-        let available = prereqs.iter().all(|c| c.passed);
+        let available = core_libbox_windows::runtime_available(&prereqs);
         log::info!("registering libbox-windows core (available: {available})");
         registry.register(
             domain::CoreDescriptor {

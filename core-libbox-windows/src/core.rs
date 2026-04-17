@@ -25,9 +25,15 @@
 //! See `crate::lib::stub-fallback` for the rationale.
 
 use crate::bridge;
+#[cfg(not(libbox_stub))]
+use crate::prereqs::{collect_prerequisites, ensure_firewall_rules_for_current_exe};
+#[cfg(not(libbox_stub))]
+use crate::tunnel_watch::{default_tunnel_name_hints, start_tunnel_watch, TunnelWatchHandle};
 use domain::{ConnectionState, CoreEvent, CoreInfo, PrerequisiteCheck, VpnCore, VpnError};
 #[cfg(not(libbox_stub))]
 use log::info;
+#[cfg(not(libbox_stub))]
+use pingle_netwatch::{NetwatcherBackend, Watcher};
 use std::ffi::CString;
 use std::os::raw::c_char;
 use std::path::Path;
@@ -49,6 +55,10 @@ pub struct LibboxCoreWindows {
     service: Arc<Mutex<Option<*mut std::os::raw::c_void>>>,
     event_tx: Arc<Mutex<mpsc::Sender<CoreEvent>>>,
     event_rx: Mutex<Option<mpsc::Receiver<CoreEvent>>>,
+    #[cfg(not(libbox_stub))]
+    watcher: Arc<dyn Watcher>,
+    #[cfg(not(libbox_stub))]
+    watch_handle: Arc<Mutex<Option<TunnelWatchHandle>>>,
 }
 
 // Safety: the libbox handle is opaque and the only thing that touches
@@ -67,12 +77,31 @@ impl Default for LibboxCoreWindows {
 #[allow(dead_code)] // helpers go unused in stub mode (which is most hosts)
 impl LibboxCoreWindows {
     pub fn new() -> Self {
+        #[cfg(libbox_stub)]
+        {
+            let (tx, rx) = mpsc::channel();
+            return Self {
+                state: Arc::new(Mutex::new(ConnectionState::Disconnected)),
+                service: Arc::new(Mutex::new(None)),
+                event_tx: Arc::new(Mutex::new(tx)),
+                event_rx: Mutex::new(Some(rx)),
+            };
+        }
+
+        #[cfg(not(libbox_stub))]
+        Self::with_watcher(Arc::new(NetwatcherBackend::new()))
+    }
+
+    #[cfg(not(libbox_stub))]
+    pub fn with_watcher(watcher: Arc<dyn Watcher>) -> Self {
         let (tx, rx) = mpsc::channel();
         Self {
             state: Arc::new(Mutex::new(ConnectionState::Disconnected)),
             service: Arc::new(Mutex::new(None)),
             event_tx: Arc::new(Mutex::new(tx)),
             event_rx: Mutex::new(Some(rx)),
+            watcher,
+            watch_handle: Arc::new(Mutex::new(None)),
         }
     }
 
@@ -91,6 +120,18 @@ impl LibboxCoreWindows {
             .lock()
             .unwrap_or_else(|e| e.into_inner())
             .send(CoreEvent::Log(msg.into()));
+    }
+
+    #[cfg(not(libbox_stub))]
+    fn stop_tunnel_watch(&self) {
+        if let Some(handle) = self
+            .watch_handle
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .take()
+        {
+            handle.stop();
+        }
     }
 
     /// Read the config file from disk into a CString. libbox expects
@@ -147,6 +188,7 @@ impl VpnCore for LibboxCoreWindows {
                 return Err(VpnError::AlreadyConnected);
             }
 
+            ensure_firewall_rules_for_current_exe()?;
             self.emit_state(ConnectionState::Connecting);
             self.log(format!("[libbox-windows] start: {config_path}"));
 
@@ -173,7 +215,24 @@ impl VpnCore for LibboxCoreWindows {
             }
 
             *self.service.lock().unwrap_or_else(|e| e.into_inner()) = Some(handle);
-            self.emit_state(ConnectionState::Connected);
+            match start_tunnel_watch(
+                self.watcher.clone(),
+                self.state.clone(),
+                self.event_tx.clone(),
+                default_tunnel_name_hints(),
+            ) {
+                Ok(watch_handle) => {
+                    *self
+                        .watch_handle
+                        .lock()
+                        .unwrap_or_else(|e| e.into_inner()) = Some(watch_handle);
+                    self.log("[libbox-windows] netwatch tunnel observer active");
+                }
+                Err(error) => {
+                    self.log(format!("[libbox-windows] netwatch unavailable: {error}"));
+                    self.emit_state(ConnectionState::Connected);
+                }
+            }
             info!("libbox-windows core started");
             Ok(())
         }
@@ -211,6 +270,7 @@ impl VpnCore for LibboxCoreWindows {
                 return Err(e);
             }
 
+            self.stop_tunnel_watch();
             self.emit_state(ConnectionState::Disconnected);
             info!("libbox-windows core stopped");
             Ok(())
@@ -273,17 +333,7 @@ impl VpnCore for LibboxCoreWindows {
 
         #[cfg(not(libbox_stub))]
         {
-            // The DLL is statically linked at build time so by the time
-            // this method runs we know it loaded. Live capability
-            // discovery (TUN device, WinTun driver, admin rights, etc.)
-            // belongs in a separate Windows-specific check that runs
-            // out of the daemon's prerequisite layer — out of scope for
-            // the skeleton.
-            vec![PrerequisiteCheck {
-                name: "libbox.dll".into(),
-                passed: true,
-                message: "linked".into(),
-            }]
+            collect_prerequisites()
         }
     }
 
@@ -395,7 +445,7 @@ mod tests {
     #[test]
     fn new_core_starts_disconnected() {
         let core = LibboxCoreWindows::new();
-        matches!(core.status(), ConnectionState::Disconnected);
+        assert_eq!(core.status(), ConnectionState::Disconnected);
     }
 
     #[test]

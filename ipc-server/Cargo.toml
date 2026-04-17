@@ -71,3 +71,4 @@ core-libbox-macos = { path = "../../core-libbox-macos" }
 [dev-dependencies]
 core-mock = { path = "../core-mock" }
 data = { path = "../data", default-features = false }
+tempfile = "3"
