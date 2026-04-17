@@ -667,6 +667,7 @@ fn prerequisite_check_to_json(check: &domain::PrerequisiteCheck) -> Value {
     })
 }
 
+#[cfg(target_os = "macos")]
 fn system_extension_record_to_json(record: &sysext::SystemExtensionRecord) -> Value {
     json!({
         "team_id": record.team_id,
