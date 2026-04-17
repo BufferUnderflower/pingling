@@ -114,9 +114,11 @@ fn build_plugin(manifest: Manifest, name: &str) -> Result<Plugin, PluginError> {
     let mut builder = PluginBuilder::new(manifest).with_wasi(true);
     if let Some(target) = configured_wasmtime_target() {
         let mut config = wasmtime::Config::new();
-        config
-            .target(&target)
-            .map_err(|e| PluginError::Wasm(format!("load {name}: invalid Wasmtime target `{target}`: {e:#}")))?;
+        config.target(&target).map_err(|e| {
+            PluginError::Wasm(format!(
+                "load {name}: invalid Wasmtime target `{target}`: {e:#}"
+            ))
+        })?;
         log::info!("loading pipeline plugin {name} with Wasmtime target {target}");
         builder = builder.with_wasmtime_config(config);
     }

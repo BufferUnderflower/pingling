@@ -37,6 +37,14 @@ pub mod methods {
     pub const CORE_PREREQS: &str = "core.prereqs";
     pub const CORE_CAPABILITIES: &str = "core.capabilities";
 
+    // System extension lifecycle & inspection.
+    pub const SYSTEM_EXTENSION_STATUS: &str = "systemExtension.status";
+    pub const SYSTEM_EXTENSION_INSTALL: &str = "systemExtension.install";
+    pub const SYSTEM_EXTENSION_UNINSTALL: &str = "systemExtension.uninstall";
+
+    // macOS privacy / settings shortcuts.
+    pub const SYSTEM_SETTINGS_OPEN_FULL_DISK_ACCESS: &str = "systemSettings.openFullDiskAccess";
+
     // Settings & config
     pub const CONFIG_GET: &str = "config.get";
     pub const CONFIG_SET: &str = "config.set";
@@ -98,6 +106,10 @@ pub mod methods {
         CORE_INFO,
         CORE_PREREQS,
         CORE_CAPABILITIES,
+        SYSTEM_EXTENSION_STATUS,
+        SYSTEM_EXTENSION_INSTALL,
+        SYSTEM_EXTENSION_UNINSTALL,
+        SYSTEM_SETTINGS_OPEN_FULL_DISK_ACCESS,
         CONFIG_GET,
         CONFIG_SET,
         CONFIG_INFO,

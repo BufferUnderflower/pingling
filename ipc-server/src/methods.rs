@@ -17,11 +17,16 @@ use serde_json::{json, Value};
 use service::VpnManager;
 use std::sync::Arc;
 
+#[cfg(target_os = "macos")]
+use core_libbox_macos::sysext;
+
 use super::broadcaster::EventBroadcaster;
 use super::protocol::{
     Notification, Request, Response, RpcError, APPLICATION_ERROR, INVALID_PARAMS, METHOD_NOT_FOUND,
 };
 use super::protocol_constants::{events, methods as m};
+
+const DEFAULT_SYSEXT_BUNDLE_ID: &str = "one.pingle.vpn.system-extension";
 
 // The IPC dispatcher splits into two halves:
 //
@@ -163,6 +168,43 @@ fn call(
             // enable/disable UI affordances.
             Ok(json!({ "capabilities": vpn.capabilities() }))
         }
+        x if x == m::SYSTEM_EXTENSION_STATUS => {
+            let params: SystemExtensionParams = parse_params(&req.params).or_else(|_| {
+                Ok::<SystemExtensionParams, RpcError>(SystemExtensionParams::default())
+            })?;
+            let bundle_id = params
+                .bundle_id
+                .as_deref()
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .unwrap_or(DEFAULT_SYSEXT_BUNDLE_ID);
+            system_extension_status(vpn, bundle_id)
+        }
+        x if x == m::SYSTEM_EXTENSION_INSTALL => {
+            let params: SystemExtensionParams = parse_params(&req.params).or_else(|_| {
+                Ok::<SystemExtensionParams, RpcError>(SystemExtensionParams::default())
+            })?;
+            let bundle_id = params
+                .bundle_id
+                .as_deref()
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .unwrap_or(DEFAULT_SYSEXT_BUNDLE_ID);
+            system_extension_install(bundle_id)
+        }
+        x if x == m::SYSTEM_EXTENSION_UNINSTALL => {
+            let params: SystemExtensionParams = parse_params(&req.params).or_else(|_| {
+                Ok::<SystemExtensionParams, RpcError>(SystemExtensionParams::default())
+            })?;
+            let bundle_id = params
+                .bundle_id
+                .as_deref()
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .unwrap_or(DEFAULT_SYSEXT_BUNDLE_ID);
+            system_extension_uninstall(bundle_id)
+        }
+        x if x == m::SYSTEM_SETTINGS_OPEN_FULL_DISK_ACCESS => open_full_disk_access_settings(),
 
         // ----- Config / settings -------------------------------------------
         x if x == m::CONFIG_GET => {
@@ -530,6 +572,12 @@ struct TestLatencyParams {
     outbound_ids: Vec<String>,
 }
 
+#[derive(Debug, Deserialize, Default)]
+struct SystemExtensionParams {
+    #[serde(default, rename = "bundleId", alias = "bundle_id")]
+    bundle_id: Option<String>,
+}
+
 /// Single-id param used by `profile.get`, `profile.delete`, `profile.activate`.
 #[derive(Debug, Deserialize)]
 struct ProfileGetParams {
@@ -609,4 +657,149 @@ fn outbound_to_json(o: &domain::Outbound) -> Value {
         "selected": o.selected,
         "metadata": o.metadata,
     })
+}
+
+fn prerequisite_check_to_json(check: &domain::PrerequisiteCheck) -> Value {
+    json!({
+        "name": check.name,
+        "passed": check.passed,
+        "message": check.message,
+    })
+}
+
+fn system_extension_record_to_json(record: &sysext::SystemExtensionRecord) -> Value {
+    json!({
+        "team_id": record.team_id,
+        "bundle_id": record.bundle_id,
+        "version": record.version,
+        "build_version": record.build_version,
+        "display_name": record.display_name,
+        "state": record.state,
+    })
+}
+
+fn system_extension_checks_to_json(vpn: &Arc<VpnManager>) -> Vec<Value> {
+    vpn.check_prerequisites()
+        .iter()
+        .map(prerequisite_check_to_json)
+        .collect()
+}
+
+fn rpc_error(message: impl Into<String>, stable_code: &'static str) -> RpcError {
+    RpcError {
+        code: APPLICATION_ERROR,
+        message: message.into(),
+        data: Some(json!({
+            "code": stable_code,
+            "recoverable": false,
+        })),
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn system_extension_status(vpn: &Arc<VpnManager>, bundle_id: &str) -> Result<Value, RpcError> {
+    let status = sysext::status(bundle_id).map_err(|error| {
+        rpc_error(
+            format!("system extension status failed: {error}"),
+            "system_extension_status_failed",
+        )
+    })?;
+    let record = status.record.as_ref().map(system_extension_record_to_json);
+    let records: Vec<Value> = status
+        .records
+        .iter()
+        .map(system_extension_record_to_json)
+        .collect();
+    Ok(json!({
+        "bundle_id": status.bundle_id,
+        "embedded_bundle": status
+            .embedded_bundle
+            .as_ref()
+            .map(|path| path.display().to_string()),
+        "installed": status.is_installed(),
+        "version": status.version(),
+        "build_version": status.build_version(),
+        "state": status
+            .record
+            .as_ref()
+            .map(|record| record.state.clone())
+            .unwrap_or_else(|| "not installed".to_string()),
+        "record": record,
+        "records": records,
+        "prereqs": system_extension_checks_to_json(vpn),
+    }))
+}
+
+#[cfg(not(target_os = "macos"))]
+fn system_extension_status(_vpn: &Arc<VpnManager>, _bundle_id: &str) -> Result<Value, RpcError> {
+    Err(rpc_error(
+        "system extension control is only available on macOS",
+        "system_extension_unsupported_platform",
+    ))
+}
+
+#[cfg(target_os = "macos")]
+fn system_extension_install(bundle_id: &str) -> Result<Value, RpcError> {
+    sysext::prompt_install(bundle_id)
+        .map(|outcome| json!({ "bundle_id": bundle_id, "message": outcome.message }))
+        .map_err(|error| {
+            rpc_error(
+                format!("system extension install failed: {error}"),
+                "system_extension_install_failed",
+            )
+        })
+}
+
+#[cfg(not(target_os = "macos"))]
+fn system_extension_install(_bundle_id: &str) -> Result<Value, RpcError> {
+    Err(rpc_error(
+        "system extension control is only available on macOS",
+        "system_extension_unsupported_platform",
+    ))
+}
+
+#[cfg(target_os = "macos")]
+fn system_extension_uninstall(bundle_id: &str) -> Result<Value, RpcError> {
+    sysext::request_uninstall(bundle_id)
+        .map(|outcome| json!({ "bundle_id": bundle_id, "message": outcome.message }))
+        .map_err(|error| {
+            rpc_error(
+                format!("system extension uninstall failed: {error}"),
+                "system_extension_uninstall_failed",
+            )
+        })
+}
+
+#[cfg(not(target_os = "macos"))]
+fn system_extension_uninstall(_bundle_id: &str) -> Result<Value, RpcError> {
+    Err(rpc_error(
+        "system extension control is only available on macOS",
+        "system_extension_unsupported_platform",
+    ))
+}
+
+#[cfg(target_os = "macos")]
+fn open_full_disk_access_settings() -> Result<Value, RpcError> {
+    core_libbox_macos::sysext::open_full_disk_access_settings()
+        .map(|outcome| {
+            json!({
+                "ok": true,
+                "url": outcome.url,
+                "message": outcome.message,
+            })
+        })
+        .map_err(|error| {
+            rpc_error(
+                format!("open full disk access settings failed: {error}"),
+                "open_full_disk_access_settings_failed",
+            )
+        })
+}
+
+#[cfg(not(target_os = "macos"))]
+fn open_full_disk_access_settings() -> Result<Value, RpcError> {
+    Err(rpc_error(
+        "full disk access settings are only available on macOS",
+        "open_full_disk_access_settings_unsupported_platform",
+    ))
 }

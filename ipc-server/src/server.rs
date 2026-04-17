@@ -655,6 +655,22 @@ mod tests {
     }
 
     #[test]
+    fn system_extension_status_returns_shape() {
+        let vpn = build_vpn();
+        let resp = handle_line(
+            r#"{"jsonrpc":"2.0","id":1,"method":"systemExtension.status"}"#,
+            &vpn,
+            &bc(),
+        )
+        .unwrap();
+        let result = resp.result.unwrap();
+        assert!(result["bundle_id"].is_string());
+        assert!(result["installed"].is_boolean());
+        assert!(result["records"].is_array());
+        assert!(result["prereqs"].is_array());
+    }
+
+    #[test]
     fn core_capabilities_returns_list() {
         let vpn = build_vpn();
         let resp = handle_line(

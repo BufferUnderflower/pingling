@@ -65,6 +65,9 @@ core-libbox-windows = { path = "../core-libbox-windows", optional = true }
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"
 
+[target.'cfg(target_os = "macos")'.dependencies]
+core-libbox-macos = { path = "../../core-libbox-macos" }
+
 [dev-dependencies]
 core-mock = { path = "../core-mock" }
 data = { path = "../data", default-features = false }
