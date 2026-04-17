@@ -11,6 +11,7 @@ serde_json = "1"
 log = "0.4"
 tempfile = "3"
 wasmtime = { version = "41.0.4", features = ["pulley"] }
+dirs = "6"
 
 [dev-dependencies]
 # Integration tests in tests/ are separate compilation units; they

@@ -189,38 +189,9 @@ fn resolve_plugin_state_root() -> Result<PathBuf, String> {
         return Ok(override_root);
     }
 
-    #[cfg(target_os = "macos")]
-    {
-        let home = std::env::var_os("HOME").ok_or_else(|| "HOME is not set".to_string())?;
-        return Ok(PathBuf::from(home)
-            .join("Library")
-            .join("Application Support")
-            .join("pingle")
-            .join("plugin-state"));
-    }
-
-    #[cfg(target_os = "windows")]
-    {
-        let appdata =
-            std::env::var_os("APPDATA").ok_or_else(|| "APPDATA is not set".to_string())?;
-        return Ok(PathBuf::from(appdata).join("pingle").join("plugin-state"));
-    }
-
-    #[cfg(not(any(target_os = "macos", target_os = "windows")))]
-    {
-        let xdg = std::env::var_os("XDG_CONFIG_HOME");
-        let home = std::env::var_os("HOME");
-        let base = xdg
-            .filter(|value| !value.is_empty())
-            .map(PathBuf::from)
-            .or_else(|| {
-                home.filter(|value| !value.is_empty())
-                    .map(PathBuf::from)
-                    .map(|p| p.join(".config"))
-            })
-            .ok_or_else(|| "neither XDG_CONFIG_HOME nor HOME is set".to_string())?;
-        return Ok(base.join("pingle").join("plugin-state"));
-    }
+    let config_root =
+        dirs::config_dir().ok_or_else(|| "platform config dir is not available".to_string())?;
+    Ok(config_root.join("pingle").join("plugin-state"))
 }
 
 // ---------------------------------------------------------------------------
@@ -329,6 +300,7 @@ impl Authenticator for PluginAdapter {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use tempfile::tempdir;
 
     #[test]
     fn handle_ipc_input_serialises_method_and_params() {
@@ -392,5 +364,28 @@ mod tests {
         let s: AuthStatusWire = serde_json::from_value(raw).unwrap();
         assert!(s.is_authenticated);
         assert_eq!(s.user_id.as_deref(), Some("alice"));
+    }
+
+    #[test]
+    fn resolve_plugin_state_root_honours_override() {
+        let tmp = tempdir().unwrap();
+        unsafe {
+            std::env::set_var(SESSION_STORE_ENV, tmp.path());
+        }
+        let resolved = resolve_plugin_state_root().unwrap();
+        unsafe {
+            std::env::remove_var(SESSION_STORE_ENV);
+        }
+        assert_eq!(resolved, tmp.path());
+    }
+
+    #[test]
+    fn resolve_plugin_state_root_uses_platform_config_suffix() {
+        let resolved = resolve_plugin_state_root().unwrap();
+        assert!(
+            resolved.to_string_lossy().ends_with("pingle/plugin-state"),
+            "expected platform config path to end with pingle/plugin-state, got {}",
+            resolved.display()
+        );
     }
 }

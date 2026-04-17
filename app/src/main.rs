@@ -128,27 +128,7 @@ fn resolve_plugins_dir(cfg: &PinglingConfig) -> Option<std::path::PathBuf> {
     if !cfg.plugins.plugins_dir.is_empty() {
         return Some(std::path::PathBuf::from(&cfg.plugins.plugins_dir));
     }
-    #[cfg(target_os = "macos")]
-    {
-        let home = std::env::var_os("HOME")?;
-        Some(std::path::PathBuf::from(home).join("Library/Application Support/pingle/plugins"))
-    }
-    #[cfg(target_os = "windows")]
-    {
-        let appdata = std::env::var_os("APPDATA")?;
-        Some(std::path::PathBuf::from(appdata).join("pingle\\plugins"))
-    }
-    #[cfg(not(any(target_os = "macos", target_os = "windows")))]
-    {
-        let base = match std::env::var_os("XDG_CONFIG_HOME") {
-            Some(xdg) => std::path::PathBuf::from(xdg),
-            None => {
-                let home = std::env::var_os("HOME")?;
-                std::path::PathBuf::from(home).join(".config")
-            }
-        };
-        Some(base.join("pingle/plugins"))
-    }
+    dirs::config_dir().map(|base| base.join("pingle").join("plugins"))
 }
 
 /// Scan the plugins dir for `.wasm` files, try to load each via

@@ -80,7 +80,10 @@ pub fn start_tunnel_watch(
 
     if tracked.is_some() {
         emit_state_if_changed(&state, &event_tx, ConnectionState::Connected);
-        emit_log(&event_tx, "netwatch: tunnel interface already present before connect");
+        emit_log(
+            &event_tx,
+            "netwatch: tunnel interface already present before connect",
+        );
     }
 
     let events = watcher.subscribe()?;
@@ -184,10 +187,7 @@ mod tests {
     }
 
     impl FakeWatcher {
-        fn new(
-            list: IfaceMap,
-            subscribe_rx: mpsc::Receiver<UpdateEvent>,
-        ) -> Self {
+        fn new(list: IfaceMap, subscribe_rx: mpsc::Receiver<UpdateEvent>) -> Self {
             Self {
                 list,
                 subscribe_rx: Mutex::new(Some(subscribe_rx)),

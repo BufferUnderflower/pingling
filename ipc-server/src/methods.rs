@@ -168,6 +168,7 @@ fn call(
             // enable/disable UI affordances.
             Ok(json!({ "capabilities": vpn.capabilities() }))
         }
+        x if x == m::CORE_ENSURE_FIREWALL_RULES => core_ensure_firewall_rules(vpn),
         x if x == m::SYSTEM_EXTENSION_STATUS => {
             let params: SystemExtensionParams = parse_params(&req.params).or_else(|_| {
                 Ok::<SystemExtensionParams, RpcError>(SystemExtensionParams::default())
@@ -493,6 +494,33 @@ fn plugin_meta_for_daemon_info(vpn: &Arc<VpnManager>) -> Value {
         });
     }
     out
+}
+
+fn core_ensure_firewall_rules(_vpn: &Arc<VpnManager>) -> Result<Value, RpcError> {
+    #[cfg(all(target_os = "windows", feature = "libbox-windows"))]
+    {
+        core_libbox_windows::prereqs::ensure_firewall_rules_for_current_exe()
+            .map_err(vpn_error_to_rpc)?;
+        let checks = _vpn.check_prerequisites();
+        let items: Vec<serde_json::Value> = checks
+            .iter()
+            .map(|c| {
+                json!({
+                    "name": c.name,
+                    "passed": c.passed,
+                    "message": c.message,
+                })
+            })
+            .collect();
+        Ok(json!({ "ok": true, "checks": items }))
+    }
+
+    #[cfg(not(all(target_os = "windows", feature = "libbox-windows")))]
+    {
+        Err(vpn_error_to_rpc(domain::VpnError::PrerequisiteMissing(
+            "firewall rule management is only available in Windows libbox builds".into(),
+        )))
+    }
 }
 
 /// Publish the current VPN status as a `event.stateChanged` push event.

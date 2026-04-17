@@ -28,6 +28,7 @@ util = { path = "../util" }
 log = "0.4"
 env_logger = "0.11"
 libc = "0.2"
+dirs = "6"
 
 # UserApi plugins are loaded at RUNTIME from .wasm files via extism —
 # see plugin-extism + docs/architecture-userapi.md. The daemon does NOT

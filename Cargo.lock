@@ -183,6 +183,7 @@ dependencies = [
  "core-mock",
  "core-singbox-standalone",
  "data",
+ "dirs",
  "domain",
  "env_logger",
  "ipc-server",
@@ -3836,6 +3837,7 @@ dependencies = [
 name = "plugin-extism"
 version = "0.1.0"
 dependencies = [
+ "dirs",
  "domain",
  "extism",
  "log",

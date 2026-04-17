@@ -222,10 +222,8 @@ impl VpnCore for LibboxCoreWindows {
                 default_tunnel_name_hints(),
             ) {
                 Ok(watch_handle) => {
-                    *self
-                        .watch_handle
-                        .lock()
-                        .unwrap_or_else(|e| e.into_inner()) = Some(watch_handle);
+                    *self.watch_handle.lock().unwrap_or_else(|e| e.into_inner()) =
+                        Some(watch_handle);
                     self.log("[libbox-windows] netwatch tunnel observer active");
                 }
                 Err(error) => {

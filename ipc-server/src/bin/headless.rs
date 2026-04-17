@@ -34,9 +34,12 @@
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use domain::{ConnectionState, CoreDescriptor, CoreEvent, CoreSource, InstallIdProvider, ProfileStorage, SettingsStorage};
 #[cfg(feature = "libbox-windows")]
 use domain::VpnCore;
+use domain::{
+    ConnectionState, CoreDescriptor, CoreEvent, CoreSource, InstallIdProvider, ProfileStorage,
+    SettingsStorage,
+};
 
 fn main() {
     // Default to debug logging unless RUST_LOG already set.
@@ -210,7 +213,10 @@ fn build_vpn_manager(registry: service::CoreRegistry) -> Arc<service::VpnManager
 }
 
 fn resolve_default_config_path(active_core: Option<&str>) -> Option<String> {
-    if let Some(path) = std::env::var("PINGLING_CONFIG_PATH").ok().filter(|value| !value.is_empty()) {
+    if let Some(path) = std::env::var("PINGLING_CONFIG_PATH")
+        .ok()
+        .filter(|value| !value.is_empty())
+    {
         return Some(path);
     }
 
@@ -241,7 +247,10 @@ fn build_profile_store() -> Result<Option<data::EncryptedProfileStore>, domain::
     }
 }
 
-fn spawn_core_event_bridge(vpn: Arc<service::VpnManager>, broadcaster: Arc<ipc_server::EventBroadcaster>) {
+fn spawn_core_event_bridge(
+    vpn: Arc<service::VpnManager>,
+    broadcaster: Arc<ipc_server::EventBroadcaster>,
+) {
     let Some(rx) = vpn.subscribe_active_core_events() else {
         return;
     };
@@ -253,17 +262,15 @@ fn spawn_core_event_bridge(vpn: Arc<service::VpnManager>, broadcaster: Arc<ipc_s
                 match event {
                     CoreEvent::Log(message) => broadcaster.publish_log("info", &message),
                     CoreEvent::ErrorLog(message) => broadcaster.publish_log("error", &message),
-                    CoreEvent::StateChanged(state) => publish_state_from_core(&broadcaster, &vpn, state),
-                    CoreEvent::Started => publish_state_from_core(
-                        &broadcaster,
-                        &vpn,
-                        ConnectionState::Connecting,
-                    ),
-                    CoreEvent::Stopped(_) => publish_state_from_core(
-                        &broadcaster,
-                        &vpn,
-                        ConnectionState::Disconnected,
-                    ),
+                    CoreEvent::StateChanged(state) => {
+                        publish_state_from_core(&broadcaster, &vpn, state)
+                    }
+                    CoreEvent::Started => {
+                        publish_state_from_core(&broadcaster, &vpn, ConnectionState::Connecting)
+                    }
+                    CoreEvent::Stopped(_) => {
+                        publish_state_from_core(&broadcaster, &vpn, ConnectionState::Disconnected)
+                    }
                     CoreEvent::Crashed(message) => {
                         broadcaster.publish_log("error", &message);
                         publish_state_from_core(

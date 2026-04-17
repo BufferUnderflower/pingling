@@ -655,6 +655,30 @@ mod tests {
     }
 
     #[test]
+    fn core_ensure_firewall_rules_is_a_supported_method() {
+        let vpn = build_vpn();
+        let resp = handle_line(
+            r#"{"jsonrpc":"2.0","id":1,"method":"core.ensureFirewallRules"}"#,
+            &vpn,
+            &bc(),
+        )
+        .unwrap();
+        if let Some(result) = resp.result {
+            let checks = result["checks"].as_array().expect("checks is array");
+            for check in checks {
+                assert!(check["name"].is_string());
+                assert!(check["passed"].is_boolean());
+                assert!(check["message"].is_string());
+            }
+        } else {
+            let err = resp.error.expect("json-rpc error");
+            assert_eq!(err.code, crate::protocol::APPLICATION_ERROR);
+            let data = err.data.expect("stable error metadata");
+            assert!(data["code"].is_string());
+        }
+    }
+
+    #[test]
     fn system_extension_status_returns_shape() {
         let vpn = build_vpn();
         let resp = handle_line(

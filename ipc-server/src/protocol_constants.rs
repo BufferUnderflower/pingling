@@ -36,6 +36,7 @@ pub mod methods {
     pub const CORE_INFO: &str = "core.info";
     pub const CORE_PREREQS: &str = "core.prereqs";
     pub const CORE_CAPABILITIES: &str = "core.capabilities";
+    pub const CORE_ENSURE_FIREWALL_RULES: &str = "core.ensureFirewallRules";
 
     // System extension lifecycle & inspection.
     pub const SYSTEM_EXTENSION_STATUS: &str = "systemExtension.status";
@@ -106,6 +107,7 @@ pub mod methods {
         CORE_INFO,
         CORE_PREREQS,
         CORE_CAPABILITIES,
+        CORE_ENSURE_FIREWALL_RULES,
         SYSTEM_EXTENSION_STATUS,
         SYSTEM_EXTENSION_INSTALL,
         SYSTEM_EXTENSION_UNINSTALL,

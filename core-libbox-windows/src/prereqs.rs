@@ -68,7 +68,10 @@ pub fn collect_prerequisites() -> Vec<PrerequisiteCheck> {
         Ok(interfaces) => PrerequisiteCheck {
             name: NETWATCH_CHECK.into(),
             passed: true,
-            message: format!("interface watcher available ({} interfaces visible)", interfaces.len()),
+            message: format!(
+                "interface watcher available ({} interfaces visible)",
+                interfaces.len()
+            ),
         },
         Err(error) => PrerequisiteCheck {
             name: NETWATCH_CHECK.into(),
@@ -89,10 +92,12 @@ pub fn ensure_firewall_rules_for_current_exe() -> Result<(), VpnError> {
 
     #[cfg(windows)]
     {
-        let exe = current_executable_path()
-            .map_err(|error| VpnError::PermissionDenied(format!("resolve current executable: {error}")))?;
-        ensure_firewall_rules(&exe)
-            .map_err(|error| VpnError::PermissionDenied(format!("ensure Windows Firewall rules: {error}")))
+        let exe = current_executable_path().map_err(|error| {
+            VpnError::PermissionDenied(format!("resolve current executable: {error}"))
+        })?;
+        ensure_firewall_rules(&exe).map_err(|error| {
+            VpnError::PermissionDenied(format!("ensure Windows Firewall rules: {error}"))
+        })
     }
 }
 
@@ -119,7 +124,10 @@ fn firewall_probe_to_check(probe: &FirewallRuleProbe) -> PrerequisiteCheck {
         return PrerequisiteCheck {
             name,
             passed: true,
-            message: format!("inbound/outbound allow rules present for {}", path.display()),
+            message: format!(
+                "inbound/outbound allow rules present for {}",
+                path.display()
+            ),
         };
     }
 
@@ -207,7 +215,9 @@ fn ensure_firewall_rules(executable: &Path) -> Result<(), String> {
                 "profile=any",
             ])
             .output()
-            .map_err(|error| format!("run `netsh advfirewall firewall add rule` for {rule_name}: {error}"))?;
+            .map_err(|error| {
+                format!("run `netsh advfirewall firewall add rule` for {rule_name}: {error}")
+            })?;
 
         if !output.status.success() {
             return Err(format!(
@@ -247,7 +257,11 @@ fn firewall_enabled() -> Result<bool, String> {
 }
 
 #[cfg(windows)]
-fn firewall_rule_matches(rule_name: &str, executable: &Path, direction: &str) -> Result<bool, String> {
+fn firewall_rule_matches(
+    rule_name: &str,
+    executable: &Path,
+    direction: &str,
+) -> Result<bool, String> {
     let output = Command::new("netsh")
         .args([
             "advfirewall",
@@ -258,7 +272,9 @@ fn firewall_rule_matches(rule_name: &str, executable: &Path, direction: &str) ->
             "verbose",
         ])
         .output()
-        .map_err(|error| format!("run `netsh advfirewall firewall show rule` for {rule_name}: {error}"))?;
+        .map_err(|error| {
+            format!("run `netsh advfirewall firewall show rule` for {rule_name}: {error}")
+        })?;
     if !output.status.success() {
         return Ok(false);
     }
