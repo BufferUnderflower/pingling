@@ -3,10 +3,11 @@
 //!
 //! ## Local: filesystem registry
 //!
-//! On startup the server writes
-//! `$HOME/.pingle/daemons/<pid>.json` containing the connect info. A sibling
-//! `latest.json` symlink points at the most recent file. Clients on the same
-//! machine can `readdir` the directory to find every running daemon.
+//! On startup the server writes the registry entry under the shared
+//! runtime cache root (`util::paths::registry_dir()`), as
+//! `<cache>/pingle/daemons/<pid>.json`. A sibling `latest.json` copy points
+//! at the most recent file. Clients on the same machine can `readdir` the
+//! directory to find every running daemon.
 //!
 //! ## Network: UDP beacon
 //!
@@ -24,6 +25,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::thread;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use util::paths::registry_dir as runtime_registry_dir;
 
 /// Well-known UDP port for the discovery beacon. Same value used by client
 /// and server. Pick a number unlikely to clash on a developer machine.
@@ -45,7 +47,7 @@ pub struct DaemonAdvertisement {
     pub protocol_version: u32,
     /// OS process id. Unique per daemon on a machine.
     pub pid: u32,
-    /// Best-effort hostname.
+    /// Advertised host name for local loopback clients.
     pub hostname: String,
     /// `host:port` for TCP loopback. `None` if TCP listener failed to bind.
     pub tcp: Option<String>,
@@ -80,65 +82,12 @@ impl DaemonAdvertisement {
     }
 }
 
-/// Best-effort machine hostname. Tries multiple sources because the
-/// answer matters for cross-machine LAN discovery (clients use it to
-/// pick a TCP host) but for same-machine clients the daemon binds to
-/// loopback so any answer here is "name only".
+/// Advertised host for loopback-only daemons.
 ///
-/// Strategy:
-/// 1. `$HOSTNAME` env (Linux shells often set it).
-/// 2. `$COMPUTERNAME` env (Windows).
-/// 3. POSIX `gethostname(2)` syscall — works on macOS, Linux, BSD.
-///    GUI-launched processes on macOS often have neither HOSTNAME nor
-///    /etc/hostname, but always have a kernel-reported hostname.
-/// 4. `/etc/hostname` (some stripped-down Linux containers).
-/// 5. `"localhost"` — a *correct* loopback name, not the misleading
-///    `"unknown"` we used to write. The daemon binds to loopback only;
-///    `localhost` resolves on every platform.
+/// The daemon only binds local addresses, so discovery should surface the
+/// loopback name that clients can actually connect to rather than the machine
+/// hostname, which is only useful for labels.
 fn hostname() -> String {
-    if let Ok(h) = std::env::var("HOSTNAME") {
-        let h = h.trim();
-        if !h.is_empty() {
-            return h.to_string();
-        }
-    }
-    if let Ok(h) = std::env::var("COMPUTERNAME") {
-        let h = h.trim();
-        if !h.is_empty() {
-            return h.to_string();
-        }
-    }
-
-    // POSIX gethostname(2). Avoids /etc/hostname (which doesn't exist on
-    // macOS) and avoids pulling a third-party hostname crate.
-    #[cfg(unix)]
-    {
-        let mut buf = [0i8; 256];
-        // SAFETY: gethostname writes at most buf.len() bytes (NUL-terminated)
-        // into `buf` and returns 0 on success, -1 on failure. We never read
-        // past the NUL.
-        let rc = unsafe { libc::gethostname(buf.as_mut_ptr(), buf.len()) };
-        if rc == 0 {
-            let bytes: &[u8] =
-                unsafe { std::slice::from_raw_parts(buf.as_ptr() as *const u8, buf.len()) };
-            let len = bytes.iter().position(|&b| b == 0).unwrap_or(bytes.len());
-            if let Ok(s) = std::str::from_utf8(&bytes[..len]) {
-                let trimmed = s.trim();
-                if !trimmed.is_empty() {
-                    return trimmed.to_string();
-                }
-            }
-        }
-    }
-
-    if let Ok(s) = fs::read_to_string("/etc/hostname") {
-        let trimmed = s.trim();
-        if !trimmed.is_empty() {
-            return trimmed.to_string();
-        }
-    }
-
-    // The daemon binds loopback only — "localhost" is correct, "unknown" was a lie.
     "localhost".to_string()
 }
 
@@ -146,10 +95,7 @@ fn hostname() -> String {
 /// Created on demand. Returns the path even if the create failed; callers
 /// should still try to write — they may have partial perms.
 pub fn registry_dir() -> PathBuf {
-    let home = std::env::var_os("HOME")
-        .map(PathBuf::from)
-        .unwrap_or_else(std::env::temp_dir);
-    let dir = home.join(".pingle").join("daemons");
+    let dir = runtime_registry_dir();
     let _ = fs::create_dir_all(&dir);
     dir
 }
@@ -340,9 +286,46 @@ pub struct DaemonAdvertisementOwned {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serial_test::serial;
+    use tempfile::TempDir;
+
+    struct EnvGuard(&'static str);
+
+    impl EnvGuard {
+        fn set(key: &'static str, value: &std::path::Path) -> Self {
+            unsafe { std::env::set_var(key, value) };
+            Self(key)
+        }
+    }
+
+    impl Drop for EnvGuard {
+        fn drop(&mut self) {
+            unsafe { std::env::remove_var(self.0) };
+        }
+    }
+
+    fn install_runtime_env(root: &std::path::Path) -> Vec<EnvGuard> {
+        let mut guards = Vec::new();
+        for key in [
+            "HOME",
+            "XDG_CONFIG_HOME",
+            "XDG_CACHE_HOME",
+            "APPDATA",
+            "LOCALAPPDATA",
+            "TMPDIR",
+            "TEMP",
+            "TMP",
+        ] {
+            guards.push(EnvGuard::set(key, root));
+        }
+        guards
+    }
 
     #[test]
+    #[serial]
     fn registry_file_round_trip() {
+        let home = TempDir::new().expect("runtime tempdir");
+        let _guards = install_runtime_env(home.path());
         let ad = DaemonAdvertisement::new(Some("127.0.0.1:9999".into()), None);
         let path = publish_registry(&ad).expect("publish");
         let read = fs::read_to_string(&path).expect("read");
@@ -373,6 +356,7 @@ mod tests {
         thread::sleep(Duration::from_millis(50));
         let result = probe_once(&server_addr.to_string(), Duration::from_secs(2)).unwrap();
         assert_eq!(result.service, "pingle");
+        assert_eq!(result.hostname, "localhost");
         assert_eq!(result.tcp.as_deref(), Some("127.0.0.1:9000"));
         assert_eq!(result.log_file, None);
     }

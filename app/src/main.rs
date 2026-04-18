@@ -480,7 +480,15 @@ fn main() {
             // -- Build registry + manager --
             let registry = build_registry(&cfg);
             let mut storage: Box<dyn domain::SettingsStorage> =
-                Box::new(data::MemorySettingsStorage::new());
+                match data::JsonFileSettingsStorage::default_path() {
+                    Ok(store) => Box::new(store),
+                    Err(error) => {
+                        log::warn!(
+                            "settings store: failed to initialize ({error}); using memory store"
+                        );
+                        Box::new(data::MemorySettingsStorage::new())
+                    }
+                };
 
             // Set config path from config file / env
             let config_path = if cfg.core_config_path.is_empty() {
@@ -899,6 +907,7 @@ fn config_info(state: tauri::State<AppState>) -> serde_json::Value {
     serde_json::json!({
         "core_type": state.vpn.active_core_type().unwrap_or_default(),
         "config_path": config_path,
+        "paths": ipc::runtime_paths_json(),
     })
 }
 

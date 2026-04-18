@@ -112,6 +112,7 @@ fn main() {
         "uds": handle.uds_path,
         "tcp": handle.tcp_addr,
         "pid": std::process::id(),
+        "paths": ipc_server::runtime_paths_json(),
     });
     println!("{line}");
     // Important: flush so the parent test process can read it immediately.
@@ -189,7 +190,14 @@ fn register_preferred_or_fallback(
 
 fn build_vpn_manager(registry: service::CoreRegistry) -> Arc<service::VpnManager> {
     let active_core = registry.active_type().map(str::to_string);
-    let mut storage: Box<dyn SettingsStorage> = Box::new(data::MemorySettingsStorage::new());
+    let mut storage: Box<dyn SettingsStorage> = match data::JsonFileSettingsStorage::default_path()
+    {
+        Ok(store) => Box::new(store),
+        Err(error) => {
+            log::warn!("headless: settings store unavailable ({error}); using memory store");
+            Box::new(data::MemorySettingsStorage::new())
+        }
+    };
     if let Some(config_path) = resolve_default_config_path(active_core.as_deref()) {
         let _ = storage.set_string("config_path", &config_path);
     }

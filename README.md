@@ -6,6 +6,10 @@ lifecycle logic (process management, config, settings, tray) and exposes a typed
 Flutter UI connects to.
 
 **The Flutter UI lives in a separate repository.** This repo is the daemon only.
+Client-side IPC consumption now lives in the separate sibling repo
+`../pingle-ipc`, which is a Rust-only consumer library. This daemon does not
+depend on that repo; it only exposes the JSON-RPC contract that clients
+consume.
 
 See [ARCHITECTURE.md](./ARCHITECTURE.md) for the full system design, IPC protocol
 specification, domain breakdown, and acceptance criteria per feature.

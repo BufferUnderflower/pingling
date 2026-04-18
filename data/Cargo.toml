@@ -5,6 +5,7 @@ edition = "2021"
 
 [dependencies]
 domain = { path = "../domain" }
+util = { path = "../util" }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 tauri = { version = "2", features = [], optional = true }
@@ -23,6 +24,7 @@ uuid = { version = "1", features = ["v4"] }
 keyring = { version = "3", features = ["apple-native", "windows-native", "sync-secret-service"] }
 
 [dev-dependencies]
+serial_test = "3"
 tempfile = "3"
 
 [features]

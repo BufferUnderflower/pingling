@@ -4,3 +4,8 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
+dirs = "6"
+
+[dev-dependencies]
+serial_test = "3"
+tempfile = "3"

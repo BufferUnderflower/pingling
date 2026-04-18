@@ -2,8 +2,9 @@
 //!
 //! Every JSON-RPC method name and every push-event method name lives here
 //! exactly once. Both this Rust file and its Dart twin
-//! (`clients/tui/lib/ipc/protocol_constants.dart`) MUST stay in lockstep —
-//! `clients/tui/test/protocol_parity_test.dart` is the canary that catches
+//! (`pingle-tui/lib/ipc/protocol_constants.dart`) MUST stay in lockstep.
+//! The standalone `pingle-ipc` repo is the canonical shared consumer library,
+//! and `pingle-tui/test/protocol_parity_test.dart` is the canary that catches
 //! any drift.
 //!
 //! ## Conventions
@@ -61,10 +62,9 @@ pub mod methods {
     // (e.g. `auth.login`, `profile.bootstrap`) are NOT listed here. The
     // daemon does not enumerate or validate plugin namespaces — they're
     // handled by the IPC fall-through in `methods.rs`. See
-    // `docs/architecture-plugin.md`. The Dart twin
-    // (`clients/tui/lib/ipc/protocol_constants.dart`) likewise contains
-    // only the daemon-built-in methods; plugin-side method names are
-    // hardcoded inside the screens that call them.
+    // `docs/architecture-plugin.md`. Client protocol-constant twins likewise
+    // contain only the daemon-built-in methods; plugin-side method names are
+    // handled in consumer-specific layers.
 
     // Daemon meta
     pub const DAEMON_INFO: &str = "daemon.info";

@@ -3,6 +3,8 @@
 //! Small helpers that involve OS I/O (filesystem, environment) but don't
 //! belong in the pure `domain` crate.
 
+pub mod paths;
+
 /// Find a binary in the system PATH.
 ///
 /// Handles platform-correct path separators (`:` on Unix, `;` on Windows).

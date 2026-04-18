@@ -10,6 +10,7 @@
 
 use crate::protocol::Notification;
 use serde_json::{json, Value};
+use std::collections::VecDeque;
 use std::sync::{mpsc, Mutex};
 
 /// A single subscriber's outbound queue.
@@ -19,14 +20,19 @@ pub type Subscriber = mpsc::Sender<Notification>;
 ///
 /// Cheap to clone (it's an `Arc<Mutex<Vec<…>>>` internally). Clone it into
 /// every part of the daemon that needs to publish events.
-#[derive(Default)]
 pub struct EventBroadcaster {
     subs: Mutex<Vec<Subscriber>>,
+    history: Mutex<VecDeque<Notification>>,
+    history_limit: usize,
 }
 
 impl EventBroadcaster {
     pub fn new() -> Self {
-        Self::default()
+        Self {
+            subs: Mutex::new(Vec::new()),
+            history: Mutex::new(VecDeque::new()),
+            history_limit: 128,
+        }
     }
 
     /// Register a new subscriber. Returns the receiver half of the channel
@@ -34,6 +40,12 @@ impl EventBroadcaster {
     /// the wire.
     pub fn subscribe(&self) -> mpsc::Receiver<Notification> {
         let (tx, rx) = mpsc::channel();
+        {
+            let history = self.history.lock().unwrap_or_else(|e| e.into_inner());
+            for notif in history.iter() {
+                let _ = tx.send(notif.clone());
+            }
+        }
         let mut subs = self.subs.lock().unwrap_or_else(|e| e.into_inner());
         subs.push(tx);
         rx
@@ -42,6 +54,13 @@ impl EventBroadcaster {
     /// Publish a notification to every subscriber. Stale (closed) channels
     /// are pruned.
     pub fn publish(&self, notif: Notification) {
+        {
+            let mut history = self.history.lock().unwrap_or_else(|e| e.into_inner());
+            history.push_back(notif.clone());
+            while history.len() > self.history_limit {
+                history.pop_front();
+            }
+        }
         let mut subs = self.subs.lock().unwrap_or_else(|e| e.into_inner());
         subs.retain(|tx| tx.send(notif.clone()).is_ok());
     }
@@ -70,6 +89,12 @@ impl EventBroadcaster {
     /// Number of currently registered subscribers (after pruning is best-effort).
     pub fn subscriber_count(&self) -> usize {
         self.subs.lock().map(|s| s.len()).unwrap_or(0)
+    }
+}
+
+impl Default for EventBroadcaster {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
@@ -108,5 +133,17 @@ mod tests {
         b.publish_log("info", "hello");
         assert_eq!(rx1.recv().unwrap().params["message"], "hello");
         assert_eq!(rx2.recv().unwrap().params["message"], "hello");
+    }
+
+    #[test]
+    fn late_subscriber_receives_recent_history() {
+        let b = EventBroadcaster::new();
+        b.publish_log("info", "startup");
+
+        let rx = b.subscribe();
+        let notif = rx.recv().unwrap();
+        assert_eq!(notif.method, "event.log");
+        assert_eq!(notif.params["level"], "info");
+        assert_eq!(notif.params["message"], "startup");
     }
 }

@@ -25,6 +25,7 @@ use super::protocol::{
     Notification, Request, Response, RpcError, APPLICATION_ERROR, INVALID_PARAMS, METHOD_NOT_FOUND,
 };
 use super::protocol_constants::{events, methods as m};
+use crate::runtime_paths_json;
 
 const DEFAULT_SYSEXT_BUNDLE_ID: &str = "one.pingle.vpn.system-extension";
 
@@ -234,6 +235,7 @@ fn call(
             Ok(json!({
                 "core_type": vpn.active_core_type().unwrap_or_default(),
                 "config_path": path,
+                "paths": runtime_paths_json(),
             }))
         }
         x if x == m::CONFIG_VALIDATE => {
@@ -304,6 +306,7 @@ fn call(
             "protocol_version": crate::PROTOCOL_VERSION,
             "capabilities": vpn.capabilities(),
             "active_core": vpn.active_core_type().unwrap_or_default(),
+            "paths": runtime_paths_json(),
             // Plugin metadata: name + authenticator status. Lets clients
             // render "Plugin: pingle-hub-userapi · alice" in their chrome
             // without dispatching a separate IPC call. Always present
@@ -830,4 +833,69 @@ fn open_full_disk_access_settings() -> Result<Value, RpcError> {
         "full disk access settings are only available on macOS",
         "open_full_disk_access_settings_unsupported_platform",
     ))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use core_mock::MockCore;
+    use data::MemorySettingsStorage;
+    use serde_json::json;
+    use service::CoreRegistry;
+    use std::sync::Arc;
+
+    fn build_vpn() -> Arc<VpnManager> {
+        let mut registry = CoreRegistry::new();
+        registry.register(
+            domain::CoreDescriptor {
+                core_type: "mock".into(),
+                display_name: "Mock".into(),
+                source: domain::CoreSource::Mocked,
+                binary_path: None,
+                available: true,
+            },
+            Box::new(MockCore::new()),
+        );
+        let storage: Box<dyn domain::SettingsStorage> = Box::new(MemorySettingsStorage::new());
+        Arc::new(VpnManager::new(registry, storage))
+    }
+
+    #[test]
+    fn daemon_info_includes_runtime_paths() {
+        let vpn = build_vpn();
+        let req = Request {
+            jsonrpc: "2.0".into(),
+            id: Some(json!(1)),
+            method: m::DAEMON_INFO.into(),
+            params: Value::Null,
+        };
+
+        let resp = dispatch(&vpn, &Arc::new(EventBroadcaster::new()), req).unwrap();
+        let result = resp.result.expect("daemon.info result");
+        let paths = result["paths"].as_object().expect("paths object");
+        assert!(paths.get("config_root").is_some());
+        assert!(paths.get("profiles_dir").is_some());
+        assert!(paths.get("ruleset_cache_dir").is_some());
+        assert!(paths.get("registry_dir").is_some());
+        assert!(paths.get("log_file").is_some());
+    }
+
+    #[test]
+    fn config_info_includes_runtime_paths() {
+        let vpn = build_vpn();
+        let req = Request {
+            jsonrpc: "2.0".into(),
+            id: Some(json!(1)),
+            method: m::CONFIG_INFO.into(),
+            params: Value::Null,
+        };
+
+        let resp = dispatch(&vpn, &Arc::new(EventBroadcaster::new()), req).unwrap();
+        let result = resp.result.expect("config.info result");
+        assert_eq!(result["core_type"], "mock");
+        let paths = result["paths"].as_object().expect("paths object");
+        assert!(paths.get("settings_file").is_some());
+        assert!(paths.get("profiles_dir").is_some());
+        assert!(paths.get("ruleset_cache_dir").is_some());
+    }
 }
