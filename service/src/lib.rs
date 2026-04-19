@@ -31,6 +31,7 @@ pub mod handlers;
 pub mod middleware;
 // Keep plugins.rs around for backward compat but it's just re-exports now
 pub mod plugins;
+mod runtime_config;
 
 use domain::ops::*;
 use domain::pipeline::Pipeline;
@@ -43,6 +44,7 @@ use handlers::*;
 use log::info;
 use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex};
+use runtime_config::PreparedRuntimeConfig;
 
 // ---------------------------------------------------------------------------
 // CoreRegistry (unchanged)
@@ -220,10 +222,10 @@ pub struct VpnManager {
     /// trait object so tests can mock them independently.
     install_id_provider: Option<Arc<dyn InstallIdProvider>>,
 
-    /// Shared temp-config slot for active-profile connects. Kept at the
-    /// manager level so `connect()` and `restart()` can prepare a
-    /// profile-backed config path before middleware runs, while the
-    /// disconnect handler still owns dropping the file on stop.
+    /// Shared temp-config slot for the runtime config handed to the
+    /// active core. `connect()` / `restart()` materialize a processed
+    /// temp config before middleware runs, then stash it here on
+    /// success so the disconnect handler can drop it on stop.
     active_temp_config: Arc<Mutex<Option<TempConfigPath>>>,
 
     /// Optional slot-chain observer. When `Some`, every slot dispatch
@@ -611,29 +613,34 @@ impl VpnManager {
             })
     }
 
-    fn prepare_connect_config_path(&self) -> Result<String, VpnError> {
+    fn materialize_runtime_config(&self, source_path: &str) -> Result<PreparedRuntimeConfig, VpnError> {
+        runtime_config::materialize_runtime_config(
+            source_path,
+            &util::paths::ruleset_cache_dir(),
+            &util::paths::active_config_temp_dir(),
+        )
+    }
+
+    fn prepare_connect_runtime_config(&self) -> Result<PreparedRuntimeConfig, VpnError> {
         if let Some(storage) = self.profile_storage() {
             match storage.load_active_for_core_start() {
                 Ok(temp) => {
                     let path = temp.path().to_string_lossy().into_owned();
-                    *self
-                        .active_temp_config
-                        .lock()
-                        .unwrap_or_else(|e| e.into_inner()) = Some(temp);
-                    return Ok(path);
+                    return self.materialize_runtime_config(&path);
                 }
                 Err(VpnError::NotConnected) => {}
                 Err(error) => return Err(error),
             }
         }
 
-        self.get_config_path()
+        self.materialize_runtime_config(&self.get_config_path()?)
     }
 
     // -- lifecycle operations -----------------------------------------------
 
     pub fn connect(&self) -> Result<(), VpnError> {
-        let config_path = self.prepare_connect_config_path()?;
+        let prepared = self.prepare_connect_runtime_config()?;
+        let config_path = prepared.path.clone();
         let core_type = self.active_core_type_str();
         let input = ConnectInput {
             config_path: config_path.clone(),
@@ -706,6 +713,10 @@ impl VpnManager {
         );
 
         pipeline_result?;
+        *self
+            .active_temp_config
+            .lock()
+            .unwrap_or_else(|e| e.into_inner()) = Some(prepared.temp_path);
         Ok(())
     }
 
@@ -767,9 +778,9 @@ impl VpnManager {
     }
 
     pub fn restart(&self) -> Result<(), VpnError> {
-        let config_path = self.prepare_connect_config_path()?;
+        let prepared = self.prepare_connect_runtime_config()?;
         let input = RestartInput {
-            config_path,
+            config_path: prepared.path.clone(),
             core_type: self.active_core_type_str(),
             state: self.get_status(),
             metadata: BTreeMap::new(),
@@ -778,12 +789,17 @@ impl VpnManager {
             .lock()
             .unwrap_or_else(|e| e.into_inner())
             .execute(input)?;
+        *self
+            .active_temp_config
+            .lock()
+            .unwrap_or_else(|e| e.into_inner()) = Some(prepared.temp_path);
         Ok(())
     }
 
     pub fn validate_config(&self, config_path: &str) -> Result<(), VpnError> {
+        let prepared = self.materialize_runtime_config(config_path)?;
         let input = ValidateConfigInput {
-            config_path: config_path.to_string(),
+            config_path: prepared.path,
             core_type: self.active_core_type_str(),
             config_content: None,
             metadata: BTreeMap::new(),
@@ -971,8 +987,11 @@ impl VpnManager {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use core_config_processor_impls::RulesetCache;
     use data::MemorySettingsStorage;
     use domain::pipeline::{FnHook, FnWrapHook};
+    use serial_test::serial;
+    use tempfile::TempDir;
 
     // -- MockVpnCore --------------------------------------------------------
 
@@ -1067,10 +1086,31 @@ mod tests {
         reg
     }
 
+    fn runtime_config_json(marker: &str) -> String {
+        serde_json::json!({
+            "marker": marker,
+            "inbounds": [{"type": "tun"}]
+        })
+        .to_string()
+    }
+
+    fn write_runtime_config(marker: &str) -> String {
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_nanos())
+            .unwrap_or(0);
+        let path = std::env::temp_dir().join(format!(
+            "pingle-service-config-{}-{nanos}.json",
+            std::process::id()
+        ));
+        std::fs::write(&path, runtime_config_json(marker)).unwrap();
+        path.to_string_lossy().into_owned()
+    }
+
     fn manager_with_config() -> VpnManager {
         let mut storage = MemorySettingsStorage::new();
         storage
-            .set_string("config_path", "/fake/config.json")
+            .set_string("config_path", &write_runtime_config("default"))
             .unwrap();
         VpnManager::new(test_registry(), Box::new(storage))
     }
@@ -1089,9 +1129,48 @@ mod tests {
         );
         let mut storage = MemorySettingsStorage::new();
         storage
-            .set_string("config_path", "/fake/config.json")
+            .set_string("config_path", &write_runtime_config("connected"))
             .unwrap();
         VpnManager::new(reg, Box::new(storage))
+    }
+
+    struct EnvGuard {
+        key: &'static str,
+        previous: Option<std::ffi::OsString>,
+    }
+
+    impl EnvGuard {
+        fn set(key: &'static str, value: &std::path::Path) -> Self {
+            let previous = std::env::var_os(key);
+            unsafe { std::env::set_var(key, value) };
+            Self { key, previous }
+        }
+    }
+
+    impl Drop for EnvGuard {
+        fn drop(&mut self) {
+            match self.previous.as_ref() {
+                Some(value) => unsafe { std::env::set_var(self.key, value) },
+                None => unsafe { std::env::remove_var(self.key) },
+            }
+        }
+    }
+
+    fn install_runtime_env(root: &std::path::Path) -> Vec<EnvGuard> {
+        let mut guards = Vec::new();
+        for key in [
+            "HOME",
+            "XDG_CONFIG_HOME",
+            "XDG_CACHE_HOME",
+            "APPDATA",
+            "LOCALAPPDATA",
+            "TMPDIR",
+            "TEMP",
+            "TMP",
+        ] {
+            guards.push(EnvGuard::set(key, root));
+        }
+        guards
     }
 
     // -- Lifecycle tests ----------------------------------------------------
@@ -1164,6 +1243,145 @@ mod tests {
         assert!(result.is_err());
         assert!(result.unwrap_err().to_string().contains("policy block"));
         assert_eq!(mgr.get_status(), ConnectionState::Disconnected);
+    }
+
+    struct StartConfigRecordingCore {
+        state: ConnectionState,
+        started_config: Arc<Mutex<Option<String>>>,
+    }
+
+    impl StartConfigRecordingCore {
+        fn new() -> (Self, Arc<Mutex<Option<String>>>) {
+            let started_config = Arc::new(Mutex::new(None));
+            (
+                Self {
+                    state: ConnectionState::Disconnected,
+                    started_config: started_config.clone(),
+                },
+                started_config,
+            )
+        }
+    }
+
+    impl VpnCore for StartConfigRecordingCore {
+        fn start(&mut self, config_path: &str) -> Result<(), VpnError> {
+            let config = std::fs::read_to_string(config_path).map_err(|e| {
+                VpnError::InvalidConfiguration(format!("read started config {config_path}: {e}"))
+            })?;
+            *self
+                .started_config
+                .lock()
+                .unwrap_or_else(|e| e.into_inner()) = Some(config);
+            self.state = ConnectionState::Connected;
+            Ok(())
+        }
+
+        fn stop(&mut self) -> Result<(), VpnError> {
+            self.state = ConnectionState::Disconnected;
+            Ok(())
+        }
+
+        fn kill(&mut self) -> Result<(), VpnError> {
+            self.state = ConnectionState::Disconnected;
+            Ok(())
+        }
+
+        fn status(&self) -> ConnectionState {
+            self.state.clone()
+        }
+
+        fn info(&self) -> CoreInfo {
+            CoreInfo {
+                name: "recording-start-config".into(),
+                version: "0.0.0".into(),
+                supported_protocols: vec![],
+            }
+        }
+
+        fn validate_config(&self, config_path: &str) -> Result<(), VpnError> {
+            if config_path.is_empty() {
+                return Err(VpnError::InvalidConfiguration("empty".into()));
+            }
+            Ok(())
+        }
+
+        fn check_prerequisites(&self) -> Vec<PrerequisiteCheck> {
+            vec![]
+        }
+
+        fn subscribe(&self) -> Option<std::sync::mpsc::Receiver<domain::CoreEvent>> {
+            None
+        }
+    }
+
+    fn manager_with_start_config_recording_core(config_path: &str) -> (
+        VpnManager,
+        Arc<Mutex<Option<String>>>,
+    ) {
+        let (core, started_config) = StartConfigRecordingCore::new();
+        let mut reg = CoreRegistry::new();
+        reg.register(
+            CoreDescriptor {
+                core_type: "recording-start-config".into(),
+                display_name: "RecordingStartConfig".into(),
+                source: CoreSource::Mocked,
+                binary_path: None,
+                available: true,
+            },
+            Box::new(core),
+        );
+        let mut storage = MemorySettingsStorage::new();
+        storage.set_string("config_path", config_path).unwrap();
+        (VpnManager::new(reg, Box::new(storage)), started_config)
+    }
+
+    #[test]
+    #[serial]
+    fn connect_localizes_remote_rulesets_before_core_start() {
+        let runtime_root = TempDir::new().unwrap();
+        let _guards = install_runtime_env(runtime_root.path());
+        let runtime_paths = util::paths::RuntimePaths::current();
+
+        let url = "https://storage.yandexcloud.net/srs-v3/ru-app-packages.srs";
+        let cache = RulesetCache::new(runtime_paths.ruleset_cache_dir.clone()).unwrap();
+        let cached_path = cache.put(url, "binary", b"SRS-CACHED").unwrap();
+
+        let config_dir = TempDir::new().unwrap();
+        let config_path = config_dir.path().join("config.json");
+        std::fs::write(
+            &config_path,
+            serde_json::json!({
+                "inbounds": [{"type": "tun"}],
+                "route": {
+                    "rule_set": [{
+                        "type": "remote",
+                        "tag": "ru-app-packages",
+                        "format": "binary",
+                        "url": url
+                    }]
+                }
+            })
+            .to_string(),
+        )
+        .unwrap();
+
+        let (mgr, started_config) =
+            manager_with_start_config_recording_core(&config_path.to_string_lossy());
+
+        mgr.connect().unwrap();
+
+        let started_config = started_config
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone()
+            .expect("core.start should see a config");
+        let started_json: serde_json::Value = serde_json::from_str(&started_config).unwrap();
+        let localized = &started_json["route"]["rule_set"][0];
+        assert_eq!(localized["type"], "local");
+        assert_eq!(localized["tag"], "ru-app-packages");
+        assert_eq!(localized["format"], "binary");
+        assert_eq!(localized["path"], cached_path.to_string_lossy().to_string());
+        assert!(localized.get("url").is_none());
     }
 
     // -- Capability tests ---------------------------------------------------
@@ -1567,7 +1785,7 @@ mod tests {
         );
         let mut storage = MemorySettingsStorage::new();
         storage
-            .set_string("config_path", "/legacy/path.json")
+            .set_string("config_path", &write_runtime_config("legacy"))
             .unwrap();
 
         let profile_storage = Arc::new(TestProfileStorage::new());
@@ -1622,7 +1840,7 @@ mod tests {
     fn connect_uses_active_profile_when_present() {
         let (mgr, recorded, store) = manager_with_recording_core_and_profile();
         let p = store
-            .put(sample_profile("Home"), r#"{"key":"value"}"#)
+            .put(sample_profile("Home"), &runtime_config_json("profile"))
             .unwrap();
         store.set_active(&p.id).unwrap();
 
@@ -1633,13 +1851,10 @@ mod tests {
             .unwrap()
             .clone()
             .expect("core.start was called");
-        // The recorded path must be the decrypted temp file, not the
-        // legacy /legacy/path.json setting.
-        assert!(
-            path.contains("pingle-test-profile") && path.contains(&p.id),
-            "expected profile temp path, got: {path}"
-        );
-        assert_ne!(path, "/legacy/path.json");
+        let started_config: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+        assert_eq!(started_config["marker"], "profile");
+        assert!(path.contains("runtime-config-"), "expected runtime temp path, got: {path}");
     }
 
     #[test]
@@ -1648,14 +1863,16 @@ mod tests {
         // No active profile set — should fall through to legacy path.
         mgr.connect().unwrap();
         let path = recorded.lock().unwrap().clone().unwrap();
-        assert_eq!(path, "/legacy/path.json");
+        let started_config: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(path).unwrap()).unwrap();
+        assert_eq!(started_config["marker"], "legacy");
     }
 
     #[test]
     fn connect_works_with_active_profile_without_legacy_config_path() {
         let (mgr, recorded, store) = manager_with_recording_core_and_profile_no_legacy_config();
         let p = store
-            .put(sample_profile("Home"), r#"{"key":"value"}"#)
+            .put(sample_profile("Home"), &runtime_config_json("profile"))
             .unwrap();
         store.set_active(&p.id).unwrap();
 
@@ -1666,10 +1883,10 @@ mod tests {
             .unwrap()
             .clone()
             .expect("core.start was called");
-        assert!(
-            path.contains("pingle-test-profile") && path.contains(&p.id),
-            "expected profile temp path, got: {path}"
-        );
+        let started_config: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+        assert_eq!(started_config["marker"], "profile");
+        assert!(path.contains("runtime-config-"), "expected runtime temp path, got: {path}");
     }
 
     #[test]
@@ -1683,13 +1900,15 @@ mod tests {
         // handler falls back.
         mgr.connect().unwrap();
         let path = recorded.lock().unwrap().clone().unwrap();
-        assert_eq!(path, "/legacy/path.json");
+        let started_config: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(path).unwrap()).unwrap();
+        assert_eq!(started_config["marker"], "legacy");
     }
 
     #[test]
     fn disconnect_deletes_decrypted_temp_file() {
         let (mgr, recorded, store) = manager_with_recording_core_and_profile();
-        let p = store.put(sample_profile("Home"), "{}").unwrap();
+        let p = store.put(sample_profile("Home"), &runtime_config_json("profile")).unwrap();
         store.set_active(&p.id).unwrap();
         mgr.connect().unwrap();
 

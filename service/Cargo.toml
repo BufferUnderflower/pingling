@@ -4,6 +4,8 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
+core-config-processor = { path = "../core-config-processor" }
+core-config-processor-impls = { path = "../../core-config-processor-impls" }
 domain = { path = "../domain" }
 util = { path = "../util" }
 log = "0.4"
@@ -13,4 +15,5 @@ tempfile = "3"
 
 [dev-dependencies]
 data = { path = "../data", default-features = false }
+serial_test = "3"
 tempfile = "3"
