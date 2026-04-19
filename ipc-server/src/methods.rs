@@ -227,44 +227,47 @@ fn call(
             Ok(json!({ "ok": true }))
         }
         x if x == m::CONFIG_INFO => {
-            let path = vpn
-                .get_setting("config_path")
-                .ok()
-                .flatten()
-                .unwrap_or_default();
+            let info = vpn.get_config_info().map_err(vpn_error_to_rpc)?;
             Ok(json!({
-                "core_type": vpn.active_core_type().unwrap_or_default(),
-                "config_path": path,
+                "core_type": info.core_type,
+                "source_kind": info.source_kind,
+                "config_path": info.config_path,
+                "effective_config_path": info.effective_config_path,
+                "active_profile_id": info.active_profile_id,
+                "active_profile_name": info.active_profile_name,
+                "active_profile_core_type": info.active_profile_core_type,
                 "paths": runtime_paths_json(),
             }))
         }
         x if x == m::CONFIG_VALIDATE => {
-            // Run the OpValidateConfig pipeline against the given path
-            // (or the currently-configured one). Exercises plugin hooks
-            // on the validate pipeline and returns ok/error uniformly.
             let p: ConfigValidateParams = parse_params(&req.params).or_else(|_| {
                 Ok::<ConfigValidateParams, RpcError>(ConfigValidateParams { path: None })
             })?;
-            let path = match p.path {
-                Some(p) => p,
-                None => vpn
-                    .get_setting("config_path")
-                    .map_err(vpn_error_to_rpc)?
-                    .unwrap_or_default(),
+            let path = match p
+                .path
+                .as_deref()
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+            {
+                Some(path) => {
+                    vpn.validate_config(path).map_err(vpn_error_to_rpc)?;
+                    path.to_string()
+                }
+                None => vpn.validate_current_config().map_err(vpn_error_to_rpc)?,
             };
-            if path.is_empty() {
-                return Err(RpcError {
-                    code: INVALID_PARAMS,
-                    message: "config.validate: no config_path set and no path parameter".into(),
-                    data: None,
-                });
-            }
-            vpn.validate_config(&path).map_err(vpn_error_to_rpc)?;
             broadcaster.publish(Notification::new(
                 events::CONFIG_VALIDATED,
                 json!({ "path": path, "ok": true }),
             ));
             Ok(json!({ "ok": true, "path": path }))
+        }
+        x if x == m::CONFIG_EXPORT => {
+            let exported = vpn.export_current_config().map_err(vpn_error_to_rpc)?;
+            Ok(json!({
+                "path": exported.path,
+                "source_path": exported.source_path,
+                "source_kind": exported.source_kind,
+            }))
         }
 
         // ----- Outbounds (capability-gated) --------------------------------
@@ -840,6 +843,7 @@ mod tests {
     use super::*;
     use core_mock::MockCore;
     use data::MemorySettingsStorage;
+    use serial_test::serial;
     use serde_json::json;
     use service::CoreRegistry;
     use std::sync::Arc;
@@ -861,6 +865,7 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn daemon_info_includes_runtime_paths() {
         let vpn = build_vpn();
         let req = Request {
@@ -881,6 +886,7 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn config_info_includes_runtime_paths() {
         let vpn = build_vpn();
         let req = Request {
@@ -893,9 +899,54 @@ mod tests {
         let resp = dispatch(&vpn, &Arc::new(EventBroadcaster::new()), req).unwrap();
         let result = resp.result.expect("config.info result");
         assert_eq!(result["core_type"], "mock");
+        assert_eq!(result["source_kind"], "none");
         let paths = result["paths"].as_object().expect("paths object");
         assert!(paths.get("settings_file").is_some());
         assert!(paths.get("profiles_dir").is_some());
         assert!(paths.get("ruleset_cache_dir").is_some());
+        assert!(paths.get("config_inspect_dir").is_some());
+    }
+
+    #[test]
+    #[serial]
+    fn config_export_returns_export_path() {
+        let vpn = build_vpn();
+        let _ = dispatch(
+            &vpn,
+            &Arc::new(EventBroadcaster::new()),
+            Request {
+                jsonrpc: "2.0".into(),
+                id: Some(json!(1)),
+                method: m::CONFIG_SET.into(),
+                params: json!({
+                    "key": "config_path",
+                    "value": "/tmp/pingle-config.json"
+                }),
+            },
+        );
+        std::fs::write(
+            "/tmp/pingle-config.json",
+            serde_json::json!({"outbounds": [], "route": {"rules": []}}).to_string(),
+        )
+        .unwrap();
+
+        let resp = dispatch(
+            &vpn,
+            &Arc::new(EventBroadcaster::new()),
+            Request {
+                jsonrpc: "2.0".into(),
+                id: Some(json!(2)),
+                method: m::CONFIG_EXPORT.into(),
+                params: Value::Null,
+            },
+        )
+        .unwrap();
+        let result = resp.result.expect("config.export result");
+        let path = result["path"].as_str().expect("path string");
+        assert!(path.ends_with(".json"));
+        assert!(result["source_path"]
+            .as_str()
+            .unwrap()
+            .contains("runtime-config-"));
     }
 }

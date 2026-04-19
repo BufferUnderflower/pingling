@@ -13,6 +13,7 @@ pub fn runtime_paths_json() -> Value {
         "plugins_dir": paths.plugins_dir,
         "plugin_state_dir": paths.plugin_state_dir,
         "ruleset_cache_dir": paths.ruleset_cache_dir,
+        "config_inspect_dir": paths.config_inspect_dir,
         "registry_dir": paths.registry_dir,
         "log_file": paths.log_file,
         "active_config_temp_dir": paths.active_config_temp_dir,
@@ -105,6 +106,7 @@ mod tests {
         assert!(value["settings_file"].is_string());
         assert!(value["profiles_dir"].is_string());
         assert!(value["ruleset_cache_dir"].is_string());
+        assert!(value["config_inspect_dir"].is_string());
         assert!(value["registry_dir"].is_string());
         assert!(value["log_file"].is_string());
     }

@@ -16,6 +16,7 @@ pub struct RuntimePaths {
     pub plugins_dir: PathBuf,
     pub plugin_state_dir: PathBuf,
     pub ruleset_cache_dir: PathBuf,
+    pub config_inspect_dir: PathBuf,
     pub registry_dir: PathBuf,
     pub log_file: PathBuf,
     pub active_config_temp_dir: PathBuf,
@@ -32,6 +33,7 @@ impl RuntimePaths {
             plugins_dir: config_root.join("plugins"),
             plugin_state_dir: config_root.join("plugin-state"),
             ruleset_cache_dir: cache_root.join("rulesets"),
+            config_inspect_dir: cache_root.join("config-inspect"),
             registry_dir: cache_root.join("daemons"),
             log_file: cache_root.join("daemon.log"),
             active_config_temp_dir: std::env::temp_dir().join("pingle-active-configs"),
@@ -78,6 +80,11 @@ pub fn plugin_state_dir() -> PathBuf {
 /// Ruleset cache directory.
 pub fn ruleset_cache_dir() -> PathBuf {
     RuntimePaths::current().ruleset_cache_dir
+}
+
+/// Export directory for inspectable processed configs.
+pub fn config_inspect_dir() -> PathBuf {
+    RuntimePaths::current().config_inspect_dir
 }
 
 /// Per-daemon registry directory.
@@ -183,6 +190,7 @@ mod tests {
         assert_eq!(paths.plugins_dir, config_root.join("plugins"));
         assert_eq!(paths.plugin_state_dir, config_root.join("plugin-state"));
         assert_eq!(paths.ruleset_cache_dir, cache_root.join("rulesets"));
+        assert_eq!(paths.config_inspect_dir, cache_root.join("config-inspect"));
         assert_eq!(paths.registry_dir, cache_root.join("daemons"));
         assert_eq!(paths.log_file, cache_root.join("daemon.log"));
         assert_eq!(
@@ -205,6 +213,7 @@ mod tests {
         assert_eq!(plugins_dir(), paths.plugins_dir);
         assert_eq!(plugin_state_dir(), paths.plugin_state_dir);
         assert_eq!(ruleset_cache_dir(), paths.ruleset_cache_dir);
+        assert_eq!(config_inspect_dir(), paths.config_inspect_dir);
         assert_eq!(registry_dir(), paths.registry_dir);
         assert_eq!(log_file(), paths.log_file);
         assert_eq!(active_config_temp_dir(), paths.active_config_temp_dir);

@@ -42,9 +42,9 @@ use domain::{
 };
 use handlers::*;
 use log::info;
+use runtime_config::PreparedRuntimeConfig;
 use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex};
-use runtime_config::PreparedRuntimeConfig;
 
 // ---------------------------------------------------------------------------
 // CoreRegistry (unchanged)
@@ -164,6 +164,29 @@ impl Default for CoreRegistry {
     fn default() -> Self {
         Self::new()
     }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ConfigSessionInfo {
+    pub core_type: String,
+    pub source_kind: String,
+    pub config_path: Option<String>,
+    pub effective_config_path: Option<String>,
+    pub active_profile_id: Option<String>,
+    pub active_profile_name: Option<String>,
+    pub active_profile_core_type: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ExportedConfig {
+    pub path: String,
+    pub source_path: String,
+    pub source_kind: String,
+}
+
+struct EffectiveConfigPath {
+    path: String,
+    _temp_path: Option<TempConfigPath>,
 }
 
 // ---------------------------------------------------------------------------
@@ -603,6 +626,16 @@ impl VpnManager {
         registry.active_type().unwrap_or("none").to_string()
     }
 
+    fn active_core_target(&self) -> core_config_processor_impls::CoreCompatTarget {
+        let mut registry = self.registry.lock().unwrap_or_else(|e| e.into_inner());
+        let core_type = registry.active_type().unwrap_or("unknown").to_string();
+        let version = registry
+            .active_core()
+            .map(|core| core.info().version)
+            .unwrap_or_default();
+        core_config_processor_impls::CoreCompatTarget::new(core_type, version, std::env::consts::OS)
+    }
+
     fn get_config_path(&self) -> Result<String, VpnError> {
         self.storage
             .lock()
@@ -613,11 +646,15 @@ impl VpnManager {
             })
     }
 
-    fn materialize_runtime_config(&self, source_path: &str) -> Result<PreparedRuntimeConfig, VpnError> {
+    fn materialize_runtime_config(
+        &self,
+        source_path: &str,
+    ) -> Result<PreparedRuntimeConfig, VpnError> {
         runtime_config::materialize_runtime_config(
             source_path,
             &util::paths::ruleset_cache_dir(),
             &util::paths::active_config_temp_dir(),
+            self.active_core_target(),
         )
     }
 
@@ -634,6 +671,133 @@ impl VpnManager {
         }
 
         self.materialize_runtime_config(&self.get_config_path()?)
+    }
+
+    fn current_runtime_config_path(&self) -> Option<String> {
+        self.active_temp_config
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .as_ref()
+            .map(|temp| temp.path().to_string_lossy().into_owned())
+    }
+
+    fn resolve_effective_runtime_config(&self) -> Result<EffectiveConfigPath, VpnError> {
+        if let Some(path) = self.current_runtime_config_path() {
+            return Ok(EffectiveConfigPath {
+                path,
+                _temp_path: None,
+            });
+        }
+
+        let prepared = self.prepare_connect_runtime_config()?;
+        Ok(EffectiveConfigPath {
+            path: prepared.path,
+            _temp_path: Some(prepared.temp_path),
+        })
+    }
+
+    fn active_profile_summary(&self) -> Result<(Option<String>, Option<ProfileMeta>), VpnError> {
+        let active_profile_id = self.active_profile()?;
+        let active_profile = match active_profile_id.as_deref() {
+            Some(id) => self.get_profile(id)?,
+            None => None,
+        };
+        Ok((active_profile_id, active_profile))
+    }
+
+    fn source_kind(active_profile_id: &Option<String>, config_path: &Option<String>) -> String {
+        if active_profile_id.is_some() {
+            "active_profile".into()
+        } else if config_path
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .is_some()
+        {
+            "config_path".into()
+        } else {
+            "none".into()
+        }
+    }
+
+    fn inspect_label(info: &ConfigSessionInfo) -> String {
+        let candidate = if info.source_kind == "active_profile" {
+            info.active_profile_name
+                .as_deref()
+                .or(info.active_profile_id.as_deref())
+                .unwrap_or("active-profile")
+        } else if info.source_kind == "config_path" {
+            info.config_path
+                .as_deref()
+                .and_then(|path| std::path::Path::new(path).file_stem())
+                .and_then(|stem| stem.to_str())
+                .unwrap_or("config-path")
+        } else {
+            "effective-config"
+        };
+        sanitize_label(candidate)
+    }
+
+    pub fn get_config_info(&self) -> Result<ConfigSessionInfo, VpnError> {
+        let config_path = self.get_setting("config_path")?;
+        let (active_profile_id, active_profile) = self.active_profile_summary()?;
+        Ok(ConfigSessionInfo {
+            core_type: self.active_core_type_str(),
+            source_kind: Self::source_kind(&active_profile_id, &config_path),
+            config_path,
+            effective_config_path: self.current_runtime_config_path(),
+            active_profile_id,
+            active_profile_name: active_profile.as_ref().map(|profile| profile.name.clone()),
+            active_profile_core_type: active_profile
+                .as_ref()
+                .map(|profile| profile.core_type.clone()),
+        })
+    }
+
+    pub fn validate_current_config(&self) -> Result<String, VpnError> {
+        let effective = self.resolve_effective_runtime_config()?;
+        let input = ValidateConfigInput {
+            config_path: effective.path.clone(),
+            core_type: self.active_core_type_str(),
+            config_content: None,
+            metadata: BTreeMap::new(),
+        };
+        self.validate
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .execute(input)?;
+        Ok(effective.path)
+    }
+
+    pub fn export_current_config(&self) -> Result<ExportedConfig, VpnError> {
+        let effective = self.resolve_effective_runtime_config()?;
+        let info = self.get_config_info()?;
+        let inspect_dir = util::paths::config_inspect_dir();
+        std::fs::create_dir_all(&inspect_dir).map_err(|e| {
+            VpnError::StorageError(format!("create inspect dir {}: {e}", inspect_dir.display()))
+        })?;
+
+        let suffix = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or(std::time::Duration::ZERO)
+            .as_secs();
+        let export_path =
+            inspect_dir.join(format!("{}-{}.json", Self::inspect_label(&info), suffix));
+        let bytes = std::fs::read(&effective.path).map_err(|e| {
+            VpnError::StorageError(format!("read effective config {}: {e}", effective.path))
+        })?;
+        std::fs::write(&export_path, bytes).map_err(|e| {
+            VpnError::StorageError(format!(
+                "write inspect config {}: {e}",
+                export_path.display()
+            ))
+        })?;
+
+        Ok(ExportedConfig {
+            path: export_path.to_string_lossy().into_owned(),
+            source_path: effective.path,
+            source_kind: info.source_kind,
+        })
     }
 
     // -- lifecycle operations -----------------------------------------------
@@ -864,9 +1028,10 @@ impl VpnManager {
             .unwrap_or_else(|e| e.into_inner());
         match guard.as_ref() {
             Some(pipeline) => {
+                let effective = self.resolve_effective_runtime_config().ok();
                 let input = ListOutboundsInput {
                     core_type: self.active_core_type_str(),
-                    config_path: self.get_config_path().ok(),
+                    config_path: effective.as_ref().map(|resolved| resolved.path.clone()),
                     metadata: BTreeMap::new(),
                 };
                 let output = pipeline.execute(input)?;
@@ -977,6 +1142,36 @@ impl VpnManager {
             .lock()
             .unwrap_or_else(|e| e.into_inner())
             .keys()
+    }
+}
+
+fn sanitize_label(input: &str) -> String {
+    let mut rendered = String::new();
+    let mut last_dash = false;
+    for ch in input.chars() {
+        let mapped = if ch.is_ascii_alphanumeric() || ch == '_' || ch == '-' {
+            ch.to_ascii_lowercase()
+        } else {
+            '-'
+        };
+        if mapped == '-' {
+            if last_dash {
+                continue;
+            }
+            last_dash = true;
+        } else {
+            last_dash = false;
+        }
+        rendered.push(mapped);
+        if rendered.len() >= 48 {
+            break;
+        }
+    }
+    let trimmed = rendered.trim_matches('-');
+    if trimmed.is_empty() {
+        "config".into()
+    } else {
+        trimmed.into()
     }
 }
 
@@ -1314,10 +1509,9 @@ mod tests {
         }
     }
 
-    fn manager_with_start_config_recording_core(config_path: &str) -> (
-        VpnManager,
-        Arc<Mutex<Option<String>>>,
-    ) {
+    fn manager_with_start_config_recording_core(
+        config_path: &str,
+    ) -> (VpnManager, Arc<Mutex<Option<String>>>) {
         let (core, started_config) = StartConfigRecordingCore::new();
         let mut reg = CoreRegistry::new();
         reg.register(
@@ -1854,7 +2048,10 @@ mod tests {
         let started_config: serde_json::Value =
             serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
         assert_eq!(started_config["marker"], "profile");
-        assert!(path.contains("runtime-config-"), "expected runtime temp path, got: {path}");
+        assert!(
+            path.contains("runtime-config-"),
+            "expected runtime temp path, got: {path}"
+        );
     }
 
     #[test]
@@ -1886,7 +2083,10 @@ mod tests {
         let started_config: serde_json::Value =
             serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
         assert_eq!(started_config["marker"], "profile");
-        assert!(path.contains("runtime-config-"), "expected runtime temp path, got: {path}");
+        assert!(
+            path.contains("runtime-config-"),
+            "expected runtime temp path, got: {path}"
+        );
     }
 
     #[test]
@@ -1908,7 +2108,9 @@ mod tests {
     #[test]
     fn disconnect_deletes_decrypted_temp_file() {
         let (mgr, recorded, store) = manager_with_recording_core_and_profile();
-        let p = store.put(sample_profile("Home"), &runtime_config_json("profile")).unwrap();
+        let p = store
+            .put(sample_profile("Home"), &runtime_config_json("profile"))
+            .unwrap();
         store.set_active(&p.id).unwrap();
         mgr.connect().unwrap();
 

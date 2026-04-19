@@ -52,6 +52,7 @@ pub mod methods {
     pub const CONFIG_SET: &str = "config.set";
     pub const CONFIG_INFO: &str = "config.info";
     pub const CONFIG_VALIDATE: &str = "config.validate";
+    pub const CONFIG_EXPORT: &str = "config.export";
 
     // Outbounds (capability-gated)
     pub const OUTBOUNDS_LIST: &str = "outbounds.list";
@@ -116,6 +117,7 @@ pub mod methods {
         CONFIG_SET,
         CONFIG_INFO,
         CONFIG_VALIDATE,
+        CONFIG_EXPORT,
         OUTBOUNDS_LIST,
         OUTBOUNDS_SELECT,
         OUTBOUNDS_TEST_LATENCY,

@@ -303,10 +303,16 @@ impl VpnCore for LibboxCoreWindows {
             let version = unsafe {
                 let p = bridge::pingle_libbox_version();
                 Self::take_c_string(p, "unknown")
-            };
+            }
+            .trim()
+            .to_string();
             CoreInfo {
                 name: "sing-box (libbox-windows)".into(),
-                version,
+                version: if version.is_empty() {
+                    "unknown".into()
+                } else {
+                    version
+                },
                 supported_protocols: vec![
                     "vless".into(),
                     "vmess".into(),

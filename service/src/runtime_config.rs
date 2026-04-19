@@ -17,6 +17,7 @@ pub(crate) fn materialize_runtime_config(
     source_path: &str,
     ruleset_cache_dir: &Path,
     active_config_temp_dir: &Path,
+    target: core_config_processor_impls::CoreCompatTarget,
 ) -> Result<PreparedRuntimeConfig, VpnError> {
     let raw_config = std::fs::read_to_string(source_path).map_err(|e| {
         VpnError::InvalidConfiguration(format!("read runtime config {source_path}: {e}"))
@@ -25,10 +26,11 @@ pub(crate) fn materialize_runtime_config(
         VpnError::InvalidConfiguration(format!("parse runtime config {source_path}: {e}"))
     })?;
 
-    let pipeline = core_config_processor_impls::default_pipeline(ruleset_cache_dir.to_path_buf())
-        .map_err(|e| {
-            VpnError::StorageError(format!("init runtime config processor pipeline: {e}"))
-        })?;
+    let pipeline = core_config_processor_impls::default_pipeline_for_core(
+        ruleset_cache_dir.to_path_buf(),
+        target,
+    )
+    .map_err(|e| VpnError::StorageError(format!("init runtime config processor pipeline: {e}")))?;
     let processed = pipeline.process(config, &default_request()).map_err(|e| {
         VpnError::InvalidConfiguration(format!("process runtime config {source_path}: {e}"))
     })?;
@@ -50,7 +52,9 @@ pub(crate) fn materialize_runtime_config(
         std::process::id()
     ));
     let rendered = serde_json::to_vec_pretty(&processed).map_err(|e| {
-        VpnError::StorageError(format!("serialize processed runtime config {source_path}: {e}"))
+        VpnError::StorageError(format!(
+            "serialize processed runtime config {source_path}: {e}"
+        ))
     })?;
     std::fs::write(&temp_path, rendered).map_err(|e| {
         VpnError::StorageError(format!(

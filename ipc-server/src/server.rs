@@ -727,7 +727,9 @@ mod tests {
     #[test]
     fn config_validate_requires_path() {
         let vpn = build_vpn();
-        // No config_path set, no explicit path — should fail with INVALID_PARAMS
+        // No config source set anywhere — validation now resolves the
+        // effective config first, so the daemon surfaces an application
+        // error instead of a JSON-RPC parameter error.
         let resp = handle_line(
             r#"{"jsonrpc":"2.0","id":1,"method":"config.validate"}"#,
             &vpn,
@@ -735,7 +737,8 @@ mod tests {
         )
         .unwrap();
         let err = resp.error.expect("should error");
-        assert_eq!(err.code, crate::protocol::INVALID_PARAMS);
+        assert_eq!(err.code, crate::protocol::APPLICATION_ERROR);
+        assert_eq!(err.data.unwrap()["code"], "invalid_configuration");
     }
 
     #[test]
@@ -768,9 +771,12 @@ mod tests {
             &bc(),
         )
         .unwrap();
-        // Shape check only — mock core accepts any path.
+        // Validation now runs against the processed effective runtime config,
+        // not the raw stored path, so the response path is a temp JSON.
         if let Some(result) = resp.result {
-            assert_eq!(result["path"], "/tmp/stored.json");
+            let path = result["path"].as_str().expect("path string");
+            assert!(path.contains("runtime-config-"));
+            assert!(path.ends_with(".json"));
         }
     }
 
