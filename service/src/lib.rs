@@ -184,6 +184,19 @@ pub struct ExportedConfig {
     pub source_kind: String,
 }
 
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct RuntimeMetricsSnapshot {
+    pub available: bool,
+    pub controller: Option<String>,
+    pub clash_version: Option<String>,
+    pub upload_bps: Option<u64>,
+    pub download_bps: Option<u64>,
+    pub upload_total: Option<u64>,
+    pub download_total: Option<u64>,
+    pub connections_count: Option<usize>,
+    pub memory_bytes: Option<u64>,
+}
+
 struct EffectiveConfigPath {
     path: String,
     _temp_path: Option<TempConfigPath>,
@@ -251,6 +264,11 @@ pub struct VpnManager {
     /// success so the disconnect handler can drop it on stop.
     active_temp_config: Arc<Mutex<Option<TempConfigPath>>>,
 
+    /// Latest live Clash API metrics observed by the IPC-side runtime monitor.
+    /// Empty/default when the active core is not running or the controller
+    /// is unavailable.
+    runtime_metrics: Arc<Mutex<RuntimeMetricsSnapshot>>,
+
     /// Optional slot-chain observer. When `Some`, every slot dispatch
     /// (`slot.vpn.connect.*`, `slot.vpn.disconnect.*`, etc.) flows
     /// through the observer so it can log and broadcast IPC events.
@@ -280,6 +298,8 @@ impl VpnManager {
         let registry = Arc::new(Mutex::new(registry));
         let storage = Arc::new(Mutex::new(storage));
         let active_temp_config: Arc<Mutex<Option<TempConfigPath>>> = Arc::new(Mutex::new(None));
+        let runtime_metrics: Arc<Mutex<RuntimeMetricsSnapshot>> =
+            Arc::new(Mutex::new(RuntimeMetricsSnapshot::default()));
 
         Self {
             connect: Mutex::new(Pipeline::new(Box::new(ConnectHandler::new(
@@ -307,6 +327,7 @@ impl VpnManager {
             profile_storage: None,
             install_id_provider: None,
             active_temp_config: active_temp_config.clone(),
+            runtime_metrics,
             slot_observer: Mutex::new(None),
             registry,
             storage,
@@ -409,6 +430,25 @@ impl VpnManager {
         self.install_id_provider = Some(install_id_provider);
         self.active_temp_config = active_temp_config;
         self
+    }
+
+    pub fn runtime_metrics(&self) -> RuntimeMetricsSnapshot {
+        self.runtime_metrics
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone()
+    }
+
+    pub fn set_runtime_metrics(&self, snapshot: RuntimeMetricsSnapshot) {
+        let mut guard = self
+            .runtime_metrics
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        *guard = snapshot;
+    }
+
+    pub fn clear_runtime_metrics(&self) {
+        self.set_runtime_metrics(RuntimeMetricsSnapshot::default());
     }
 
     // -- Pipeline access (for middleware registration) -----------------------
@@ -738,6 +778,23 @@ impl VpnManager {
         sanitize_label(candidate)
     }
 
+    pub fn current_clash_controller(&self) -> Result<Option<String>, VpnError> {
+        let Some(path) = self.current_runtime_config_path() else {
+            return Ok(None);
+        };
+        let json = std::fs::read_to_string(&path)
+            .map_err(|e| VpnError::StorageError(format!("read runtime config {path}: {e}")))?;
+        let root: serde_json::Value = serde_json::from_str(&json).map_err(|e| {
+            VpnError::InvalidConfiguration(format!("parse runtime config {path}: {e}"))
+        })?;
+        Ok(root
+            .get("experimental")
+            .and_then(|value| value.get("clash_api"))
+            .and_then(|value| value.get("external_controller"))
+            .and_then(|value| value.as_str())
+            .map(ToOwned::to_owned))
+    }
+
     pub fn get_config_info(&self) -> Result<ConfigSessionInfo, VpnError> {
         let config_path = self.get_setting("config_path")?;
         let (active_profile_id, active_profile) = self.active_profile_summary()?;
@@ -1049,9 +1106,11 @@ impl VpnManager {
             .unwrap_or_else(|e| e.into_inner());
         match guard.as_ref() {
             Some(pipeline) => {
+                let effective = self.resolve_effective_runtime_config().ok();
                 let input = SelectOutboundInput {
                     outbound_id: outbound_id.to_string(),
                     core_type: self.active_core_type_str(),
+                    config_path: effective.as_ref().map(|resolved| resolved.path.clone()),
                     metadata: BTreeMap::new(),
                 };
                 pipeline.execute(input)?;
@@ -1186,6 +1245,7 @@ mod tests {
     use data::MemorySettingsStorage;
     use domain::pipeline::{FnHook, FnWrapHook};
     use serial_test::serial;
+    use std::io::{Read, Write};
     use tempfile::TempDir;
 
     // -- MockVpnCore --------------------------------------------------------
@@ -1289,6 +1349,40 @@ mod tests {
         .to_string()
     }
 
+    fn selector_runtime_config_json(default_tag: &str) -> String {
+        serde_json::json!({
+            "outbounds": [
+                { "type": "direct", "tag": "↔️ Direct" },
+                {
+                    "type": "selector",
+                    "tag": "🌐 Proxy",
+                    "default": default_tag,
+                    "interrupt_exist_connections": true,
+                    "outbounds": [
+                        "🇳🇱 Netherlands",
+                        "🇩🇪 Germany"
+                    ]
+                },
+                { "type": "vless", "tag": "🇳🇱 Netherlands", "server": "nl.example.com" },
+                { "type": "vless", "tag": "🇩🇪 Germany", "server": "de.example.com" }
+            ]
+        })
+        .to_string()
+    }
+
+    fn write_raw_config(json: &str) -> String {
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_nanos())
+            .unwrap_or(0);
+        let path = std::env::temp_dir().join(format!(
+            "pingle-service-raw-config-{}-{nanos}.json",
+            std::process::id()
+        ));
+        std::fs::write(&path, json).unwrap();
+        path.to_string_lossy().into_owned()
+    }
+
     fn write_runtime_config(marker: &str) -> String {
         let nanos = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
@@ -1311,6 +1405,14 @@ mod tests {
     }
 
     fn manager_connected() -> VpnManager {
+        let mut storage = MemorySettingsStorage::new();
+        storage
+            .set_string("config_path", &write_runtime_config("connected"))
+            .unwrap();
+        manager_connected_with_storage(storage)
+    }
+
+    fn manager_connected_with_storage(storage: MemorySettingsStorage) -> VpnManager {
         let mut reg = CoreRegistry::new();
         reg.register(
             CoreDescriptor {
@@ -1322,10 +1424,6 @@ mod tests {
             },
             Box::new(MockVpnCore::connected()),
         );
-        let mut storage = MemorySettingsStorage::new();
-        storage
-            .set_string("config_path", &write_runtime_config("connected"))
-            .unwrap();
         VpnManager::new(reg, Box::new(storage))
     }
 
@@ -1620,6 +1718,111 @@ mod tests {
         let outbounds = mgr.list_outbounds().unwrap();
         assert_eq!(outbounds.len(), 1);
         assert_eq!(outbounds[0].id, "test-1");
+    }
+
+    #[test]
+    fn builtin_outbound_controls_list_selector_members() {
+        let config_path = write_raw_config(&selector_runtime_config_json("🇳🇱 Netherlands"));
+        let mut storage = MemorySettingsStorage::new();
+        storage.set_string("config_path", &config_path).unwrap();
+        let mgr = VpnManager::new(test_registry(), Box::new(storage));
+
+        crate::defaults::register_builtin_outbound_controls(&mgr);
+
+        let outbounds = mgr.list_outbounds().unwrap();
+        assert_eq!(outbounds.len(), 2);
+        assert_eq!(outbounds[0].id, "🇳🇱 Netherlands");
+        assert!(outbounds[0].selected);
+        assert!(!outbounds[1].selected);
+    }
+
+    #[test]
+    fn builtin_outbound_controls_persist_selector_default_in_legacy_config() {
+        let config_path = write_raw_config(&selector_runtime_config_json("🇳🇱 Netherlands"));
+        let mut storage = MemorySettingsStorage::new();
+        storage.set_string("config_path", &config_path).unwrap();
+        let mgr = VpnManager::new(test_registry(), Box::new(storage));
+
+        crate::defaults::register_builtin_outbound_controls(&mgr);
+        mgr.select_outbound("🇩🇪 Germany").unwrap();
+
+        let updated: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(&config_path).unwrap()).unwrap();
+        assert_eq!(updated["outbounds"][1]["default"], "🇩🇪 Germany");
+    }
+
+    #[test]
+    fn builtin_outbound_controls_prefer_live_clash_selection_when_connected() {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        let server = std::thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            let mut buf = [0_u8; 4096];
+            let read = stream.read(&mut buf).unwrap();
+            let request = String::from_utf8_lossy(&buf[..read]);
+            assert!(request.starts_with("GET /proxies/"));
+            let body = r#"{"now":"🇩🇪 Germany","all":["🇳🇱 Netherlands","🇩🇪 Germany"]}"#;
+            let response = format!(
+                "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                body.len(),
+                body
+            );
+            stream.write_all(response.as_bytes()).unwrap();
+        });
+
+        let mut config: serde_json::Value =
+            serde_json::from_str(&selector_runtime_config_json("🇳🇱 Netherlands")).unwrap();
+        config["experimental"] = serde_json::json!({
+            "clash_api": { "external_controller": format!("127.0.0.1:{}", addr.port()) }
+        });
+        let config_path = write_raw_config(&serde_json::to_string(&config).unwrap());
+        let mut storage = MemorySettingsStorage::new();
+        storage.set_string("config_path", &config_path).unwrap();
+        let mgr = manager_connected_with_storage(storage);
+
+        crate::defaults::register_builtin_outbound_controls(&mgr);
+
+        let outbounds = mgr.list_outbounds().unwrap();
+        assert_eq!(outbounds.len(), 2);
+        assert!(!outbounds[0].selected);
+        assert!(outbounds[1].selected);
+        server.join().unwrap();
+    }
+
+    #[test]
+    fn builtin_outbound_controls_apply_live_clash_selection_when_connected() {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        let captured = Arc::new(Mutex::new(String::new()));
+        let captured_server = captured.clone();
+        let server = std::thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            let mut buf = [0_u8; 4096];
+            let read = stream.read(&mut buf).unwrap();
+            let request = String::from_utf8_lossy(&buf[..read]).to_string();
+            *captured_server.lock().unwrap() = request;
+            let response =
+                "HTTP/1.1 204 No Content\r\nContent-Length: 0\r\nConnection: close\r\n\r\n";
+            stream.write_all(response.as_bytes()).unwrap();
+        });
+
+        let mut config: serde_json::Value =
+            serde_json::from_str(&selector_runtime_config_json("🇳🇱 Netherlands")).unwrap();
+        config["experimental"] = serde_json::json!({
+            "clash_api": { "external_controller": format!("127.0.0.1:{}", addr.port()) }
+        });
+        let config_path = write_raw_config(&serde_json::to_string(&config).unwrap());
+        let mut storage = MemorySettingsStorage::new();
+        storage.set_string("config_path", &config_path).unwrap();
+        let mgr = manager_connected_with_storage(storage);
+
+        crate::defaults::register_builtin_outbound_controls(&mgr);
+        mgr.select_outbound("🇩🇪 Germany").unwrap();
+
+        server.join().unwrap();
+        let request = captured.lock().unwrap().clone();
+        assert!(request.starts_with("PUT /proxies/"));
+        assert!(request.contains(r#"{"name":"🇩🇪 Germany"}"#));
     }
 
     // -- Registry tests -----------------------------------------------------

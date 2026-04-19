@@ -20,11 +20,13 @@ pub mod discovery;
 pub mod methods;
 pub mod protocol;
 pub mod protocol_constants;
+pub mod runtime_monitor;
 pub mod runtime_paths;
 pub mod server;
 pub mod slot_observer;
 
 pub use broadcaster::EventBroadcaster;
+pub use runtime_monitor::spawn_runtime_monitor;
 pub use runtime_paths::runtime_paths_json;
 pub use server::{start, start_with_broadcaster, ServerHandle, PROTOCOL_VERSION};
 pub use slot_observer::BroadcastingSlotObserver;

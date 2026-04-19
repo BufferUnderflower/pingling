@@ -53,6 +53,7 @@ pub mod methods {
     pub const CONFIG_INFO: &str = "config.info";
     pub const CONFIG_VALIDATE: &str = "config.validate";
     pub const CONFIG_EXPORT: &str = "config.export";
+    pub const RUNTIME_METRICS: &str = "runtime.metrics";
 
     // Outbounds (capability-gated)
     pub const OUTBOUNDS_LIST: &str = "outbounds.list";
@@ -118,6 +119,7 @@ pub mod methods {
         CONFIG_INFO,
         CONFIG_VALIDATE,
         CONFIG_EXPORT,
+        RUNTIME_METRICS,
         OUTBOUNDS_LIST,
         OUTBOUNDS_SELECT,
         OUTBOUNDS_TEST_LATENCY,
@@ -144,6 +146,7 @@ pub mod events {
     pub const CONFIG_VALIDATED: &str = "event.configValidated";
     pub const CORE_CHANGED: &str = "event.coreChanged";
     pub const OUTBOUND_SELECTED: &str = "event.outboundSelected";
+    pub const RUNTIME_METRICS_CHANGED: &str = "event.runtimeMetricsChanged";
     pub const LOG: &str = "event.log";
     /// Emitted when any profile changes: created, updated, deleted,
     /// or activated/deactivated. Clients refresh their profile list
@@ -162,6 +165,7 @@ pub mod events {
         CONFIG_VALIDATED,
         CORE_CHANGED,
         OUTBOUND_SELECTED,
+        RUNTIME_METRICS_CHANGED,
         LOG,
         PROFILE_CHANGED,
     ];
