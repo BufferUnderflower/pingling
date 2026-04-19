@@ -6,6 +6,7 @@ members = [
     "data",
     "config",
     "proxy-dto",
+    "core-clash-api",
     "core-singbox-standalone",
     "core-libbox-windows",
     "core-mock",

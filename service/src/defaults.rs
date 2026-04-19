@@ -41,6 +41,7 @@
 
 use crate::middleware;
 use crate::VpnManager;
+use domain::pipeline::Pipeline;
 use std::sync::Arc;
 
 /// Push the standard built-in hooks onto all lifecycle pipelines.
@@ -78,4 +79,28 @@ pub fn register(mgr: &VpnManager) {
         .push_hook(Box::new(Arc::clone(&validate)));
     mgr.restart_pipeline()
         .push_hook(Box::new(Arc::clone(&validate)));
+}
+
+/// Register the built-in sing-box-compatible outbound list/select handlers.
+///
+/// These handlers treat the preferred `🌐 Proxy` selector as the user-facing
+/// location list, fall back to the first selector when that tag is absent,
+/// and persist the selector's `default` choice back into the source config.
+pub fn register_builtin_outbound_controls(mgr: &VpnManager) {
+    let fallback_config_path = mgr
+        .get_setting("config_path")
+        .ok()
+        .flatten()
+        .unwrap_or_default();
+
+    mgr.set_list_outbounds(Pipeline::new(Box::new(
+        middleware::singbox_config::SingboxConfigHandler::new(&fallback_config_path),
+    )));
+    mgr.set_select_outbound(Pipeline::new(Box::new(
+        middleware::singbox_config::SingboxSelectOutboundHandler::new(
+            mgr.registry(),
+            mgr.storage(),
+            mgr.profile_storage(),
+        ),
+    )));
 }

@@ -10,6 +10,7 @@ pub struct OpSelectOutbound;
 pub struct SelectOutboundInput {
     pub outbound_id: String,
     pub core_type: String,
+    pub config_path: Option<String>,
     pub metadata: BTreeMap<String, String>,
 }
 

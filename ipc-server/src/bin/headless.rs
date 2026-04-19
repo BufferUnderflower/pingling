@@ -203,7 +203,7 @@ fn build_vpn_manager(registry: service::CoreRegistry) -> Arc<service::VpnManager
     }
 
     let vpn_base = service::VpnManager::new(registry, storage);
-    match build_profile_store() {
+    let vpn = match build_profile_store() {
         Ok(Some(store)) => {
             log::info!("headless: profile store initialized");
             let store: Arc<data::EncryptedProfileStore> = Arc::new(store);
@@ -217,7 +217,9 @@ fn build_vpn_manager(registry: service::CoreRegistry) -> Arc<service::VpnManager
             log::warn!("headless: profile store unavailable ({error})");
             Arc::new(vpn_base)
         }
-    }
+    };
+    service::defaults::register_builtin_outbound_controls(&vpn);
+    vpn
 }
 
 fn resolve_default_config_path(active_core: Option<&str>) -> Option<String> {

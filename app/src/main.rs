@@ -542,6 +542,7 @@ fn main() {
                     Arc::new(vpn_base)
                 }
             };
+            service::defaults::register_builtin_outbound_controls(&vpn);
 
             // -- Install the wasm plugin, if one is on disk --
             //

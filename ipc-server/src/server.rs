@@ -13,6 +13,7 @@ use crate::broadcaster::EventBroadcaster;
 use crate::discovery::{self, DaemonAdvertisement};
 use crate::methods;
 use crate::protocol::{Notification, Request, Response, INVALID_REQUEST, PARSE_ERROR};
+use crate::runtime_monitor;
 use serde_json::Value;
 use service::VpnManager;
 use std::io::{self, BufRead, BufReader};
@@ -65,6 +66,8 @@ pub fn start_with_broadcaster(
     vpn: Arc<VpnManager>,
     broadcaster: Arc<EventBroadcaster>,
 ) -> io::Result<ServerHandle> {
+    runtime_monitor::spawn_runtime_monitor(vpn.clone(), broadcaster.clone());
+
     // ----- UDS listener (best-effort, unix-only) ---------------------------
     #[cfg(unix)]
     let (uds_path, uds_path_str, uds_started) = {

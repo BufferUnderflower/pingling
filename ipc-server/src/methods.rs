@@ -25,6 +25,7 @@ use super::protocol::{
     Notification, Request, Response, RpcError, APPLICATION_ERROR, INVALID_PARAMS, METHOD_NOT_FOUND,
 };
 use super::protocol_constants::{events, methods as m};
+use super::runtime_monitor::metrics_to_json;
 use crate::runtime_paths_json;
 
 const DEFAULT_SYSEXT_BUNDLE_ID: &str = "one.pingle.vpn.system-extension";
@@ -269,6 +270,7 @@ fn call(
                 "source_kind": exported.source_kind,
             }))
         }
+        x if x == m::RUNTIME_METRICS => Ok(metrics_to_json(&vpn.runtime_metrics())),
 
         // ----- Outbounds (capability-gated) --------------------------------
         x if x == m::OUTBOUNDS_LIST => {
@@ -843,8 +845,8 @@ mod tests {
     use super::*;
     use core_mock::MockCore;
     use data::MemorySettingsStorage;
-    use serial_test::serial;
     use serde_json::json;
+    use serial_test::serial;
     use service::CoreRegistry;
     use std::sync::Arc;
 

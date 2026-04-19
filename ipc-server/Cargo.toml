@@ -41,6 +41,7 @@ libbox-windows-strict = [
 ]
 
 [dependencies]
+core-clash-api = { path = "../core-clash-api" }
 domain = { path = "../domain" }
 service = { path = "../service" }
 util = { path = "../util" }

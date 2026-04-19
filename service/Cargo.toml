@@ -4,6 +4,7 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
+core-clash-api = { path = "../core-clash-api" }
 core-config-processor = { path = "../core-config-processor" }
 core-config-processor-impls = { path = "../../core-config-processor-impls" }
 domain = { path = "../domain" }
