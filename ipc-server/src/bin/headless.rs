@@ -46,7 +46,23 @@ fn main() {
     if std::env::var_os("RUST_LOG").is_none() {
         std::env::set_var("RUST_LOG", "ipc_server=debug,info");
     }
-    env_logger::init();
+    let _log_files = match ipc_server::logging::init("ipc-server-headless") {
+        Ok(files) => {
+            log::info!(
+                "headless: file logging enabled at {}",
+                files.latest_file.display()
+            );
+            Some(files)
+        }
+        Err(error) => {
+            let env = env_logger::Env::default().default_filter_or("ipc_server=debug,info");
+            let mut builder = env_logger::Builder::from_env(env);
+            builder.format_timestamp_millis();
+            builder.init();
+            log::warn!("headless: failed to initialize file logging: {error}");
+            None
+        }
+    };
 
     let registry = build_registry();
     let vpn = build_vpn_manager(registry);

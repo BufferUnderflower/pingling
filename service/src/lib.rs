@@ -33,6 +33,7 @@ pub mod middleware;
 pub mod plugins;
 mod runtime_config;
 
+use core_config_processor::{classify_error, ConfigRequest, ErrorKind, StrategyPlan};
 use domain::ops::*;
 use domain::pipeline::Pipeline;
 use domain::{
@@ -41,10 +42,11 @@ use domain::{
     VpnCore, VpnError,
 };
 use handlers::*;
-use log::info;
+use log::{info, warn};
 use runtime_config::PreparedRuntimeConfig;
 use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
 
 // ---------------------------------------------------------------------------
 // CoreRegistry (unchanged)
@@ -198,6 +200,11 @@ pub struct RuntimeMetricsSnapshot {
 }
 
 struct EffectiveConfigPath {
+    path: String,
+    _temp_path: Option<TempConfigPath>,
+}
+
+struct ConnectSourceConfig {
     path: String,
     _temp_path: Option<TempConfigPath>,
 }
@@ -690,27 +697,48 @@ impl VpnManager {
         &self,
         source_path: &str,
     ) -> Result<PreparedRuntimeConfig, VpnError> {
+        let request = runtime_config::default_request();
+        self.materialize_runtime_config_for_request(source_path, &request)
+    }
+
+    fn materialize_runtime_config_for_request(
+        &self,
+        source_path: &str,
+        request: &ConfigRequest,
+    ) -> Result<PreparedRuntimeConfig, VpnError> {
         runtime_config::materialize_runtime_config(
             source_path,
             &util::paths::ruleset_cache_dir(),
             &util::paths::active_config_temp_dir(),
             self.active_core_target(),
+            request,
         )
     }
 
-    fn prepare_connect_runtime_config(&self) -> Result<PreparedRuntimeConfig, VpnError> {
+    fn resolve_connect_source_config(&self) -> Result<ConnectSourceConfig, VpnError> {
         if let Some(storage) = self.profile_storage() {
             match storage.load_active_for_core_start() {
                 Ok(temp) => {
                     let path = temp.path().to_string_lossy().into_owned();
-                    return self.materialize_runtime_config(&path);
+                    return Ok(ConnectSourceConfig {
+                        path,
+                        _temp_path: Some(temp),
+                    });
                 }
                 Err(VpnError::NotConnected) => {}
                 Err(error) => return Err(error),
             }
         }
 
-        self.materialize_runtime_config(&self.get_config_path()?)
+        Ok(ConnectSourceConfig {
+            path: self.get_config_path()?,
+            _temp_path: None,
+        })
+    }
+
+    fn prepare_connect_runtime_config(&self) -> Result<PreparedRuntimeConfig, VpnError> {
+        let source = self.resolve_connect_source_config()?;
+        self.materialize_runtime_config(&source.path)
     }
 
     fn current_runtime_config_path(&self) -> Option<String> {
@@ -795,6 +823,162 @@ impl VpnManager {
             .map(ToOwned::to_owned))
     }
 
+    fn resolve_connect_strategy_plan(&self) -> StrategyPlan {
+        let mut registry = self.registry.lock().unwrap_or_else(|e| e.into_inner());
+        let Some(core) = registry.active_core() else {
+            return StrategyPlan {
+                strategies: vec![runtime_config::default_strategy()],
+                global_timeout: None,
+            };
+        };
+
+        let Some(bytes) = core.default_strategy_plan() else {
+            return StrategyPlan {
+                strategies: vec![runtime_config::default_strategy()],
+                global_timeout: None,
+            };
+        };
+
+        match serde_json::from_slice::<StrategyPlan>(&bytes) {
+            Ok(plan) if !plan.strategies.is_empty() => plan,
+            Ok(_) => StrategyPlan {
+                strategies: vec![runtime_config::default_strategy()],
+                global_timeout: None,
+            },
+            Err(error) => {
+                warn!("connect: invalid strategy plan from core: {error}");
+                StrategyPlan {
+                    strategies: vec![runtime_config::default_strategy()],
+                    global_timeout: None,
+                }
+            }
+        }
+    }
+
+    fn run_connect_attempt(
+        &self,
+        source_path: &str,
+        core_type: &str,
+        request: &ConfigRequest,
+    ) -> Result<TempConfigPath, VpnError> {
+        let prepared = self.materialize_runtime_config_for_request(source_path, request)?;
+        let input = ConnectInput {
+            config_path: prepared.path.clone(),
+            core_type: core_type.to_string(),
+            state: self.get_status(),
+            metadata: BTreeMap::new(),
+        };
+        self.connect
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .execute(input)?;
+        Ok(prepared.temp_path)
+    }
+
+    fn strategy_plan_timeout_error(limit: Duration) -> VpnError {
+        VpnError::Unknown(format!(
+            "connect strategy plan timed out after {} ms",
+            limit.as_millis()
+        ))
+    }
+
+    fn execute_connect_strategy_plan(
+        &self,
+        source_path: &str,
+        core_type: &str,
+        plan: &StrategyPlan,
+    ) -> Result<TempConfigPath, VpnError> {
+        let started_at = Instant::now();
+        let mut last_error: Option<VpnError> = None;
+
+        for strategy in &plan.strategies {
+            let max_attempts = strategy.retry.max_attempts();
+            for attempt_number in 1..=max_attempts {
+                if let Some(limit) = plan.global_timeout {
+                    if started_at.elapsed() >= limit {
+                        return Err(Self::strategy_plan_timeout_error(limit));
+                    }
+                }
+
+                let previous_error = last_error.as_ref().map(classify_error);
+                let request =
+                    runtime_config::request_for_strategy(strategy, attempt_number, previous_error);
+
+                info!(
+                    "connect: strategy={} attempt={}/{} stack={:?} resolver={:?}",
+                    strategy.id,
+                    attempt_number,
+                    max_attempts,
+                    strategy.stack,
+                    strategy.resolver_type
+                );
+
+                match self.run_connect_attempt(source_path, core_type, &request) {
+                    Ok(temp_path) => return Ok(temp_path),
+                    Err(error) => {
+                        let classified = classify_error(&error);
+                        warn!(
+                            "connect: strategy={} attempt={}/{} failed: {} ({:?})",
+                            strategy.id, attempt_number, max_attempts, error, classified.kind
+                        );
+
+                        if matches!(
+                            error,
+                            VpnError::AlreadyConnected
+                                | VpnError::Cancelled
+                                | VpnError::StorageError(_)
+                        ) {
+                            return Err(error);
+                        }
+
+                        let retry_within_strategy = matches!(
+                            classified.kind,
+                            ErrorKind::DnsFailure
+                                | ErrorKind::TcpTimeout
+                                | ErrorKind::TcpRefused
+                                | ErrorKind::TlsHandshake
+                                | ErrorKind::HttpError
+                                | ErrorKind::Timeout
+                                | ErrorKind::Unknown
+                        );
+                        let bail_immediately = matches!(
+                            classified.kind,
+                            ErrorKind::AuthFailure
+                                | ErrorKind::TunDevice
+                                | ErrorKind::PermissionDenied
+                                | ErrorKind::PrerequisiteMissing
+                        );
+
+                        if bail_immediately {
+                            return Err(error);
+                        }
+
+                        last_error = Some(error);
+
+                        if retry_within_strategy && attempt_number < max_attempts {
+                            let delay = strategy.retry.delay_for(attempt_number + 1);
+                            if !delay.is_zero() {
+                                if let Some(limit) = plan.global_timeout {
+                                    if started_at.elapsed().saturating_add(delay) >= limit {
+                                        return Err(Self::strategy_plan_timeout_error(limit));
+                                    }
+                                }
+                                std::thread::sleep(delay);
+                            }
+                            continue;
+                        }
+
+                        break;
+                    }
+                }
+            }
+        }
+
+        Err(last_error.unwrap_or_else(|| {
+            VpnError::Unknown("connect strategy plan completed without a successful attempt".into())
+        }))
+    }
+
     pub fn get_config_info(&self) -> Result<ConfigSessionInfo, VpnError> {
         let config_path = self.get_setting("config_path")?;
         let (active_profile_id, active_profile) = self.active_profile_summary()?;
@@ -860,15 +1044,9 @@ impl VpnManager {
     // -- lifecycle operations -----------------------------------------------
 
     pub fn connect(&self) -> Result<(), VpnError> {
-        let prepared = self.prepare_connect_runtime_config()?;
-        let config_path = prepared.path.clone();
+        let source = self.resolve_connect_source_config()?;
         let core_type = self.active_core_type_str();
-        let input = ConnectInput {
-            config_path: config_path.clone(),
-            core_type: core_type.clone(),
-            state: self.get_status(),
-            metadata: BTreeMap::new(),
-        };
+        let strategy_plan = self.resolve_connect_strategy_plan();
 
         // slot.vpn.connect.* — middleware chain.
         //
@@ -883,7 +1061,7 @@ impl VpnManager {
         let invocation_id = domain::new_invocation_id();
         let mut slot_payload = domain::VpnConnectPayload {
             core_type: core_type.clone(),
-            config_path: Some(config_path),
+            config_path: Some(source.path.clone()),
             hint: None,
             result: None,
         };
@@ -907,11 +1085,8 @@ impl VpnManager {
         }
 
         let start_ts = std::time::Instant::now();
-        let pipeline_result = self
-            .connect
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .execute(input);
+        let pipeline_result =
+            self.execute_connect_strategy_plan(&source.path, &core_type, &strategy_plan);
         let duration_ms = start_ts.elapsed().as_millis() as u64;
 
         // Stamp the result into the slot payload and fire the after
@@ -933,11 +1108,11 @@ impl VpnManager {
             slot_payload,
         );
 
-        pipeline_result?;
+        let active_temp_config = pipeline_result?;
         *self
             .active_temp_config
             .lock()
-            .unwrap_or_else(|e| e.into_inner()) = Some(prepared.temp_path);
+            .unwrap_or_else(|e| e.into_inner()) = Some(active_temp_config);
         Ok(())
     }
 
@@ -1241,6 +1416,7 @@ fn sanitize_label(input: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use core_config_processor::ConnectionStrategy;
     use core_config_processor_impls::RulesetCache;
     use data::MemorySettingsStorage;
     use domain::pipeline::{FnHook, FnWrapHook};
@@ -1674,6 +1850,151 @@ mod tests {
         assert_eq!(localized["format"], "binary");
         assert_eq!(localized["path"], cached_path.to_string_lossy().to_string());
         assert!(localized.get("url").is_none());
+    }
+
+    struct StrategyAwareRecordingCore {
+        state: ConnectionState,
+        started_stacks: Arc<Mutex<Vec<String>>>,
+    }
+
+    impl StrategyAwareRecordingCore {
+        fn new() -> (Self, Arc<Mutex<Vec<String>>>) {
+            let started_stacks = Arc::new(Mutex::new(Vec::new()));
+            (
+                Self {
+                    state: ConnectionState::Disconnected,
+                    started_stacks: started_stacks.clone(),
+                },
+                started_stacks,
+            )
+        }
+    }
+
+    impl VpnCore for StrategyAwareRecordingCore {
+        fn start(&mut self, config_path: &str) -> Result<(), VpnError> {
+            let config = std::fs::read_to_string(config_path).map_err(|e| {
+                VpnError::InvalidConfiguration(format!("read started config {config_path}: {e}"))
+            })?;
+            let json: serde_json::Value = serde_json::from_str(&config).map_err(|e| {
+                VpnError::InvalidConfiguration(format!("parse started config {config_path}: {e}"))
+            })?;
+            let stack = json["inbounds"][0]["stack"]
+                .as_str()
+                .unwrap_or("missing")
+                .to_string();
+            self.started_stacks
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .push(stack.clone());
+            if stack == "system" {
+                return Err(VpnError::ProcessStartFailed("dial tcp: i/o timeout".into()));
+            }
+            self.state = ConnectionState::Connected;
+            Ok(())
+        }
+
+        fn stop(&mut self) -> Result<(), VpnError> {
+            self.state = ConnectionState::Disconnected;
+            Ok(())
+        }
+
+        fn kill(&mut self) -> Result<(), VpnError> {
+            self.state = ConnectionState::Disconnected;
+            Ok(())
+        }
+
+        fn status(&self) -> ConnectionState {
+            self.state.clone()
+        }
+
+        fn info(&self) -> CoreInfo {
+            CoreInfo {
+                name: "strategy-aware-recording".into(),
+                version: "1.13.7".into(),
+                supported_protocols: vec![],
+            }
+        }
+
+        fn validate_config(&self, config_path: &str) -> Result<(), VpnError> {
+            if config_path.is_empty() {
+                return Err(VpnError::InvalidConfiguration("empty".into()));
+            }
+            Ok(())
+        }
+
+        fn check_prerequisites(&self) -> Vec<PrerequisiteCheck> {
+            vec![]
+        }
+
+        fn subscribe(&self) -> Option<std::sync::mpsc::Receiver<domain::CoreEvent>> {
+            None
+        }
+
+        fn default_strategy_plan(&self) -> Option<Vec<u8>> {
+            Some(
+                serde_json::to_vec(&StrategyPlan {
+                    strategies: vec![
+                        ConnectionStrategy {
+                            id: "system-first".into(),
+                            stack: core_config_processor::StackType::System,
+                            resolver_type: core_config_processor::ResolverType::System,
+                            total_timeout: Duration::from_secs(10),
+                            retry: core_config_processor::RetryPolicy::Fixed {
+                                max_attempts: 2,
+                                delay: Duration::ZERO,
+                            },
+                        },
+                        ConnectionStrategy {
+                            id: "gvisor-fallback".into(),
+                            stack: core_config_processor::StackType::GVisor,
+                            resolver_type: core_config_processor::ResolverType::System,
+                            total_timeout: Duration::from_secs(10),
+                            retry: core_config_processor::RetryPolicy::NoRetry,
+                        },
+                    ],
+                    global_timeout: Some(Duration::from_secs(30)),
+                })
+                .expect("strategy plan json"),
+            )
+        }
+    }
+
+    fn manager_with_strategy_recording_core(
+        config_path: &str,
+    ) -> (VpnManager, Arc<Mutex<Vec<String>>>) {
+        let (core, started_stacks) = StrategyAwareRecordingCore::new();
+        let mut reg = CoreRegistry::new();
+        reg.register(
+            CoreDescriptor {
+                core_type: "libbox".into(),
+                display_name: "StrategyAwareRecording".into(),
+                source: CoreSource::Mocked,
+                binary_path: None,
+                available: true,
+            },
+            Box::new(core),
+        );
+        let mut storage = MemorySettingsStorage::new();
+        storage.set_string("config_path", config_path).unwrap();
+        (VpnManager::new(reg, Box::new(storage)), started_stacks)
+    }
+
+    #[test]
+    #[serial]
+    fn connect_retries_within_strategy_and_advances_to_next_strategy() {
+        let runtime_root = TempDir::new().unwrap();
+        let _guards = install_runtime_env(runtime_root.path());
+        let config_path = write_runtime_config("strategy-retry");
+        let (mgr, started_stacks) = manager_with_strategy_recording_core(&config_path);
+
+        mgr.connect().unwrap();
+
+        let stacks = started_stacks
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone();
+        assert_eq!(stacks, vec!["system", "system", "gvisor"]);
+        assert_eq!(mgr.get_status(), ConnectionState::Connected);
     }
 
     // -- Capability tests ---------------------------------------------------

@@ -18,7 +18,6 @@ default = []
 headless = [
     "dep:core-mock",
     "dep:data",
-    "dep:env_logger",
     "dep:plugin-extism",
 ]
 # Opt-in: link + register the LibboxCoreWindows driver into the
@@ -56,7 +55,7 @@ base64 = "0.22"
 percent-encoding = "2"
 core-mock = { path = "../core-mock", optional = true }
 data = { path = "../data", default-features = false, optional = true }
-env_logger = { version = "0.11", optional = true }
+env_logger = { version = "0.11" }
 plugin-extism = { path = "../plugin-extism", optional = true }
 # Only linked when the `libbox-windows` feature is on. Unconditional
 # path = .. keeps resolver happy in the workspace; it's just never

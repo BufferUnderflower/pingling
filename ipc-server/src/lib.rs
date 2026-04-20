@@ -17,6 +17,7 @@
 pub mod broadcaster;
 pub mod deeplink;
 pub mod discovery;
+pub mod logging;
 pub mod methods;
 pub mod protocol;
 pub mod protocol_constants;
