@@ -26,6 +26,15 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - name: Stage sibling crates
+        shell: bash
+        run: |
+          set -eu
+          parent="$(dirname "$GITHUB_WORKSPACE")"
+          git clone --depth 1 https://gitlab.com/pingle_software/client/pingle-daemon.git "$parent/pingle-daemon-outer"
+          rm -rf "$parent/core-config-processor-impls" "$parent/core-libbox-macos"
+          cp -a "$parent/pingle-daemon-outer/core-config-processor-impls" "$parent/core-config-processor-impls"
+          cp -a "$parent/pingle-daemon-outer/core-libbox-macos" "$parent/core-libbox-macos"
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
       - run: cargo test --workspace --exclude app
@@ -35,6 +44,15 @@ jobs:
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
+      - name: Stage sibling crates
+        shell: bash
+        run: |
+          set -eu
+          parent="$(dirname "$GITHUB_WORKSPACE")"
+          git clone --depth 1 https://gitlab.com/pingle_software/client/pingle-daemon.git "$parent/pingle-daemon-outer"
+          rm -rf "$parent/core-config-processor-impls" "$parent/core-libbox-macos"
+          cp -a "$parent/pingle-daemon-outer/core-config-processor-impls" "$parent/core-config-processor-impls"
+          cp -a "$parent/pingle-daemon-outer/core-libbox-macos" "$parent/core-libbox-macos"
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
       - run: cargo test --workspace --exclude app
@@ -44,6 +62,14 @@ jobs:
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
+      - name: Stage sibling crates
+        shell: pwsh
+        run: |
+          $parent = Split-Path $env:GITHUB_WORKSPACE -Parent
+          git clone --depth 1 https://gitlab.com/pingle_software/client/pingle-daemon.git "$parent/pingle-daemon-outer"
+          Remove-Item -Recurse -Force "$parent/core-config-processor-impls","$parent/core-libbox-macos" -ErrorAction SilentlyContinue
+          Copy-Item -Recurse "$parent/pingle-daemon-outer/core-config-processor-impls" "$parent/core-config-processor-impls"
+          Copy-Item -Recurse "$parent/pingle-daemon-outer/core-libbox-macos" "$parent/core-libbox-macos"
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
       - run: cargo test --workspace --exclude app
@@ -55,6 +81,14 @@ jobs:
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
+      - name: Stage sibling crates
+        shell: pwsh
+        run: |
+          $parent = Split-Path $env:GITHUB_WORKSPACE -Parent
+          git clone --depth 1 https://gitlab.com/pingle_software/client/pingle-daemon.git "$parent/pingle-daemon-outer"
+          Remove-Item -Recurse -Force "$parent/core-config-processor-impls","$parent/core-libbox-macos" -ErrorAction SilentlyContinue
+          Copy-Item -Recurse "$parent/pingle-daemon-outer/core-config-processor-impls" "$parent/core-config-processor-impls"
+          Copy-Item -Recurse "$parent/pingle-daemon-outer/core-libbox-macos" "$parent/core-libbox-macos"
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
         with:
@@ -73,6 +107,14 @@ jobs:
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
+      - name: Stage sibling crates
+        shell: pwsh
+        run: |
+          $parent = Split-Path $env:GITHUB_WORKSPACE -Parent
+          git clone --depth 1 https://gitlab.com/pingle_software/client/pingle-daemon.git "$parent/pingle-daemon-outer"
+          Remove-Item -Recurse -Force "$parent/core-config-processor-impls","$parent/core-libbox-macos" -ErrorAction SilentlyContinue
+          Copy-Item -Recurse "$parent/pingle-daemon-outer/core-config-processor-impls" "$parent/core-config-processor-impls"
+          Copy-Item -Recurse "$parent/pingle-daemon-outer/core-libbox-macos" "$parent/core-libbox-macos"
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
         with:
