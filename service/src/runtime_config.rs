@@ -1,5 +1,6 @@
 use core_config_processor::{
-    AttemptInfo, ConfigRequest, ConnectionStrategy, ResolverType, RetryPolicy, StackType,
+    AttemptInfo, ConfigRequest, ConnectionStrategy, PreviousError, ResolverType, RetryPolicy,
+    StackType,
 };
 use domain::{TempConfigPath, VpnError};
 use std::path::Path;
@@ -18,6 +19,7 @@ pub(crate) fn materialize_runtime_config(
     ruleset_cache_dir: &Path,
     active_config_temp_dir: &Path,
     target: core_config_processor_impls::CoreCompatTarget,
+    request: &ConfigRequest,
 ) -> Result<PreparedRuntimeConfig, VpnError> {
     let raw_config = std::fs::read_to_string(source_path).map_err(|e| {
         VpnError::InvalidConfiguration(format!("read runtime config {source_path}: {e}"))
@@ -31,7 +33,7 @@ pub(crate) fn materialize_runtime_config(
         target,
     )
     .map_err(|e| VpnError::StorageError(format!("init runtime config processor pipeline: {e}")))?;
-    let processed = pipeline.process(config, &default_request()).map_err(|e| {
+    let processed = pipeline.process(config, request).map_err(|e| {
         VpnError::InvalidConfiguration(format!("process runtime config {source_path}: {e}"))
     })?;
 
@@ -69,20 +71,32 @@ pub(crate) fn materialize_runtime_config(
     })
 }
 
-fn default_request() -> ConfigRequest {
+pub(crate) fn default_request() -> ConfigRequest {
+    request_for_strategy(&default_strategy(), 1, None)
+}
+
+pub(crate) fn request_for_strategy(
+    strategy: &ConnectionStrategy,
+    attempt_number: u32,
+    previous_error: Option<PreviousError>,
+) -> ConfigRequest {
     ConfigRequest {
         with_host_dns: false,
         default_dns_server: None,
         attempt: AttemptInfo {
-            strategy: ConnectionStrategy {
-                id: "direct_start".into(),
-                stack: StackType::System,
-                resolver_type: ResolverType::System,
-                total_timeout: Duration::from_secs(30),
-                retry: RetryPolicy::NoRetry,
-            },
-            attempt_number: 1,
-            previous_error: None,
+            strategy: strategy.clone(),
+            attempt_number,
+            previous_error,
         },
+    }
+}
+
+pub(crate) fn default_strategy() -> ConnectionStrategy {
+    ConnectionStrategy {
+        id: "direct_start".into(),
+        stack: StackType::System,
+        resolver_type: ResolverType::System,
+        total_timeout: Duration::from_secs(30),
+        retry: RetryPolicy::NoRetry,
     }
 }
