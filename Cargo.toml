@@ -1,6 +1,7 @@
 [workspace]
 members = [
   "crates/host-contract",
+  "crates/host-runtime",
   "crates/primitive-host",
 ]
 resolver = "2"
@@ -13,5 +14,6 @@ rust-version = "1.82"
 
 [workspace.dependencies]
 pingling-host-contract = { path = "crates/host-contract" }
+pingling-host-runtime = { path = "crates/host-runtime" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"

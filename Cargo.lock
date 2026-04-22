@@ -23,6 +23,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "pingling-host-runtime"
+version = "0.1.0"
+dependencies = [
+ "pingling-host-contract",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "pingling-primitive-host"
 version = "0.1.0"
 dependencies = [

@@ -55,8 +55,8 @@ pub fn primitive_registry() -> HostResult<PluginRegistry> {
     PassthroughHost::registry()
 }
 
-fn well_known_slots() -> [&'static str; 7] {
-    [
+fn well_known_slots() -> Vec<&'static str> {
+    vec![
         Slot::CONFIG_PROCESS,
         Slot::DEEPLINK_RESOLVE,
         Slot::AUTH_SESSION,
@@ -64,6 +64,14 @@ fn well_known_slots() -> [&'static str; 7] {
         Slot::VPN_DISCONNECT,
         Slot::IPC_DISPATCH,
         Slot::PLUGIN_LOAD,
+        Slot::CORE_START,
+        Slot::CORE_STOP,
+        Slot::PROFILE_ACTIVATE,
+        Slot::PROFILE_PERSIST,
+        Slot::DAEMON_STARTUP,
+        Slot::DAEMON_SHUTDOWN,
+        Slot::OUTBOUND_SELECT,
+        Slot::OUTBOUND_TEST_LATENCY,
     ]
 }
 

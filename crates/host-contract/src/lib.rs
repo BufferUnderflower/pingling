@@ -4,6 +4,8 @@ use std::fmt;
 
 use serde::{Deserialize, Serialize};
 
+pub mod payloads;
+
 pub const HOST_PROTOCOL_VERSION: &str = "pingling.host.v1";
 pub const DEFAULT_WIRE_VERSION: u32 = 1;
 
@@ -19,6 +21,18 @@ impl Slot {
     pub const VPN_DISCONNECT: &'static str = "vpn.disconnect";
     pub const IPC_DISPATCH: &'static str = "ipc.dispatch";
     pub const PLUGIN_LOAD: &'static str = "plugin.load";
+    pub const CORE_START: &'static str = "core.start";
+    pub const CORE_STOP: &'static str = "core.stop";
+    pub const PROFILE_ACTIVATE: &'static str = "profile.activate";
+    pub const PROFILE_PERSIST: &'static str = "profile.persist";
+    pub const DAEMON_STARTUP: &'static str = "daemon.startup";
+    pub const DAEMON_SHUTDOWN: &'static str = "daemon.shutdown";
+    pub const OUTBOUND_SELECT: &'static str = "outbound.select";
+    pub const OUTBOUND_TEST_LATENCY: &'static str = "outbound.test_latency";
+    pub const NETWATCH_EVENT: &'static str = "netwatch.event";
+    pub const LOG_EMIT: &'static str = "log.emit";
+    pub const UPDATE_CHECK: &'static str = "update.check";
+    pub const CONFIG_VALIDATE: &'static str = "config.validate";
 
     pub const CONFIG_TRANSFORM: &'static str = "config.transform";
     pub const RUNTIME_COMMAND: &'static str = "runtime.command";
@@ -420,6 +434,13 @@ impl HostFailure {
     pub fn unsupported(message: impl Into<String>) -> Self {
         Self {
             code: "unsupported".to_owned(),
+            message: message.into(),
+        }
+    }
+
+    pub fn plugin_error(message: impl Into<String>) -> Self {
+        Self {
+            code: "plugin_error".to_owned(),
             message: message.into(),
         }
     }
