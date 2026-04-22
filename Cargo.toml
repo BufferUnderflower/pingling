@@ -1,8 +1,18 @@
 [workspace]
 members = [
+  "crates/config",
+  "crates/config-pipeline",
+  "crates/core-mock",
+  "crates/core-process",
+  "crates/core-singbox",
+  "crates/domain",
   "crates/host-contract",
   "crates/host-runtime",
+  "crates/netwatch",
+  "crates/paths",
+  "crates/plugin-extism",
   "crates/primitive-host",
+  "crates/storage",
 ]
 resolver = "2"
 
@@ -15,5 +25,16 @@ rust-version = "1.82"
 [workspace.dependencies]
 pingling-host-contract = { path = "crates/host-contract" }
 pingling-host-runtime = { path = "crates/host-runtime" }
+pingling-config = { path = "crates/config" }
+pingling-config-pipeline = { path = "crates/config-pipeline" }
+pingling-core-mock = { path = "crates/core-mock" }
+pingling-core-process = { path = "crates/core-process" }
+pingling-core-singbox = { path = "crates/core-singbox" }
+pingling-domain = { path = "crates/domain" }
+pingling-netwatch = { path = "crates/netwatch" }
+pingling-paths = { path = "crates/paths" }
+pingling-plugin-extism = { path = "crates/plugin-extism" }
+pingling-storage = { path = "crates/storage" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+log = "0.4"
