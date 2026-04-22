@@ -1,25 +1,47 @@
 # Pingling
 
-Pingling is the public contract layer for extension hosts.
+Pingling is a public foundation for small extension-driven VPN/proxy hosts.
 
 This repository intentionally contains only:
 
 - stable slot names and payload envelopes;
 - manifest and registry types for composing multiple extensions;
 - deterministic ordering and conflict rules for slot ownership;
-- host-function traits used by extension runners;
-- primitive passthrough implementations for local tests and examples.
+- host/runtime traits used by extension runners;
+- configurable path, storage, process-core, config-pipeline, netwatch, and
+  Extism adapter building blocks;
+- primitive no-op implementations for local tests and examples.
 
-Product-specific core logic, config transformation, rule-set handling, platform
-packaging, runtime policy, and service integration belong in downstream private
-repositories. Public code must not encode those decisions.
+Product-specific auth, billing, fleet policy, platform packaging, and service
+integration belong in downstream repositories. Public code must not encode those
+decisions.
 
 ## Crates
 
 - `pingling-host-contract`: shared types and traits for slot-based extension
   calls, plugin manifests, and host-side registry planning.
-- `pingling-primitive-host`: no-op passthrough implementation for consumers
-  that need a host without product logic.
+- `pingling-host-runtime`: loaded-plugin registry and policy execution.
+- `pingling-plugin-extism`: generic `plugin_handle_ipc` Extism adapter.
+- `pingling-domain`: core lifecycle, profile, storage, pipeline, and plugin
+  traits.
+- `pingling-core-process`: configurable process-backed `VpnCore`.
+- `pingling-core-mock`: in-process reference core for tests and demos.
+- `pingling-core-singbox`: sing-box CLI preset over the process core.
+- `pingling-config-pipeline`: generic ordered config processors.
+- `pingling-paths` and `pingling-storage`: configurable layout and simple
+  storage helpers.
+- `pingling-netwatch`: cross-platform network-interface watch contract.
+- `pingling-primitive-host`: tiny CLI host for local smoke tests.
+
+```mermaid
+flowchart LR
+  App["Downstream app"] --> Runtime["pingling-host-runtime"]
+  Runtime --> Contract["pingling-host-contract"]
+  Runtime --> Extism["pingling-plugin-extism"]
+  App --> Core["pingling-core-process / mock / singbox"]
+  Core --> Domain["pingling-domain"]
+  App --> Pipeline["pingling-config-pipeline"]
+```
 
 ## Extension Shape
 
@@ -53,3 +75,10 @@ Policies are explicit:
 
 The public boundary is the protocol. A downstream application owns how slots are
 implemented and which extensions are loaded.
+
+## Local Checks
+
+```bash
+cargo test --workspace --all-targets --locked
+cargo run -p pingling-primitive-host -- status
+```

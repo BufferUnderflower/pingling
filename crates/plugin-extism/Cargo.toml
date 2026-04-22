@@ -1,5 +1,5 @@
 [package]
-name = "pingling-primitive-host"
+name = "pingling-plugin-extism"
 version = "0.1.0"
 edition.workspace = true
 license.workspace = true
@@ -7,9 +7,13 @@ repository.workspace = true
 rust-version.workspace = true
 
 [dependencies]
-pingling-core-mock.workspace = true
-pingling-core-process.workspace = true
-pingling-core-singbox.workspace = true
+extism = "1.21"
+log.workspace = true
 pingling-domain.workspace = true
 pingling-host-contract.workspace = true
+pingling-host-runtime.workspace = true
+pingling-paths.workspace = true
+serde.workspace = true
 serde_json.workspace = true
+tempfile = "3"
+wasmtime = { version = "41.0.4", features = ["pulley"] }

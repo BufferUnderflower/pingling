@@ -1,0 +1,21 @@
+[package]
+name = "pingling-config-pipeline"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+description = "Generic config processor pipeline for VPN cores"
+
+[lib]
+name = "pingling_config_pipeline"
+crate-type = ["rlib"]
+
+[dependencies]
+log.workspace = true
+pingling-domain.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+
+[dev-dependencies]
+tempfile = "3"

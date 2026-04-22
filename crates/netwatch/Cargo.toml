@@ -1,0 +1,21 @@
+[package]
+name = "pingling-netwatch"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+description = "Cross-platform network interface watcher with an optional event hook"
+
+[lib]
+name = "pingling_netwatch"
+crate-type = ["rlib"]
+
+[dependencies]
+log.workspace = true
+netwatcher = "0.4"
+serde.workspace = true
+serde_json.workspace = true
+
+[dev-dependencies]
+env_logger = "0.11"
