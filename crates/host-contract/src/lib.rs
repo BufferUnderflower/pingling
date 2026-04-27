@@ -40,6 +40,33 @@ impl Slot {
     pub const STORAGE_LOOKUP: &'static str = "storage.lookup";
     pub const TELEMETRY_OBSERVE: &'static str = "telemetry.observe";
 
+    pub const WELL_KNOWN: &[&str] = &[
+        Self::CONFIG_PROCESS,
+        Self::DEEPLINK_RESOLVE,
+        Self::AUTH_SESSION,
+        Self::VPN_CONNECT,
+        Self::VPN_DISCONNECT,
+        Self::IPC_DISPATCH,
+        Self::PLUGIN_LOAD,
+        Self::CORE_START,
+        Self::CORE_STOP,
+        Self::PROFILE_ACTIVATE,
+        Self::PROFILE_PERSIST,
+        Self::DAEMON_STARTUP,
+        Self::DAEMON_SHUTDOWN,
+        Self::OUTBOUND_SELECT,
+        Self::OUTBOUND_TEST_LATENCY,
+        Self::NETWATCH_EVENT,
+        Self::LOG_EMIT,
+        Self::UPDATE_CHECK,
+        Self::CONFIG_VALIDATE,
+        Self::CONFIG_TRANSFORM,
+        Self::RUNTIME_COMMAND,
+        Self::RUNTIME_OBSERVE,
+        Self::STORAGE_LOOKUP,
+        Self::TELEMETRY_OBSERVE,
+    ];
+
     pub fn new(value: impl Into<String>) -> HostResult<Self> {
         let value = value.into();
         validate_token("slot", &value)?;
@@ -542,6 +569,13 @@ mod tests {
     }
 
     #[test]
+    fn well_known_slot_index_contains_every_public_slot_constant() {
+        assert!(Slot::WELL_KNOWN.contains(&Slot::CONFIG_PROCESS));
+        assert!(Slot::WELL_KNOWN.contains(&Slot::TELEMETRY_OBSERVE));
+        assert_eq!(Slot::WELL_KNOWN.len(), 24);
+    }
+
+    #[test]
     fn builds_invocation_with_protocol() {
         let invocation = HostInvocation::new(
             Slot::new(Slot::CONFIG_PROCESS).unwrap(),
@@ -575,6 +609,75 @@ mod tests {
 
         assert_eq!(decoded, manifest);
         decoded.validate().unwrap();
+    }
+
+    #[test]
+    fn manifest_snapshot_is_stable() {
+        let manifest = PluginManifest {
+            id: "example.config".to_owned(),
+            priority: 100,
+            methods: vec!["config.*".to_owned()],
+            slots: vec![SlotBinding::new(
+                Slot::new(Slot::CONFIG_PROCESS).unwrap(),
+                vec![SlotPhase::Before, SlotPhase::Exec, SlotPhase::After],
+                SlotPolicy::Pipeline,
+            )
+            .unwrap()],
+            needs: vec!["host.http.v1".to_owned()],
+            allowed_hosts: vec!["*.example.test".to_owned()],
+        };
+
+        let encoded = serde_json::to_string_pretty(&manifest).unwrap();
+        assert_eq!(
+            encoded,
+            r#"{
+  "id": "example.config",
+  "priority": 100,
+  "methods": [
+    "config.*"
+  ],
+  "slots": [
+    {
+      "name": "config.process",
+      "phases": [
+        "before",
+        "exec",
+        "after"
+      ],
+      "policy": "pipeline"
+    }
+  ],
+  "needs": [
+    "host.http.v1"
+  ],
+  "allowed_hosts": [
+    "*.example.test"
+  ]
+}"#
+        );
+    }
+
+    #[test]
+    fn slot_binding_snapshot_is_stable() {
+        let binding = SlotBinding::new(
+            Slot::new(Slot::VPN_CONNECT).unwrap(),
+            vec![SlotPhase::Before, SlotPhase::Exec],
+            SlotPolicy::FirstSuccess,
+        )
+        .unwrap();
+
+        let encoded = serde_json::to_string_pretty(&binding).unwrap();
+        assert_eq!(
+            encoded,
+            r#"{
+  "name": "vpn.connect",
+  "phases": [
+    "before",
+    "exec"
+  ],
+  "policy": "first_success"
+}"#
+        );
     }
 
     #[test]
@@ -618,6 +721,95 @@ mod tests {
     }
 
     #[test]
+    fn registry_plans_bindings_and_methods_deterministically() {
+        let mut registry = PluginRegistry::new();
+        registry
+            .register(manifest(
+                "example.alpha",
+                50,
+                Slot::CONFIG_PROCESS,
+                SlotPhase::Exec,
+                SlotPolicy::Pipeline,
+            ))
+            .unwrap();
+        registry
+            .register(manifest(
+                "example.beta",
+                10,
+                Slot::CONFIG_PROCESS,
+                SlotPhase::Exec,
+                SlotPolicy::FirstSuccess,
+            ))
+            .unwrap();
+        let mut method_plugin = PluginManifest::new("example.methods").unwrap();
+        method_plugin.priority = 10;
+        method_plugin.methods = vec!["config.*".to_owned(), "config.process".to_owned()];
+        registry.register(method_plugin).unwrap();
+
+        let binding_plan: Vec<_> = registry
+            .bindings_for(&Slot::new(Slot::CONFIG_PROCESS).unwrap(), SlotPhase::Exec)
+            .into_iter()
+            .map(|binding| {
+                serde_json::json!({
+                    "plugin_id": binding.plugin_id,
+                    "priority": binding.priority,
+                    "slot": binding.slot.as_str(),
+                    "phase": binding.phase,
+                    "policy": binding.policy,
+                })
+            })
+            .collect();
+
+        assert_eq!(
+            binding_plan,
+            vec![
+                serde_json::json!({
+                    "phase": "exec",
+                    "policy": "first_success",
+                    "plugin_id": "example.beta",
+                    "priority": 10,
+                    "slot": "config.process"
+                }),
+                serde_json::json!({
+                    "phase": "exec",
+                    "policy": "pipeline",
+                    "plugin_id": "example.alpha",
+                    "priority": 50,
+                    "slot": "config.process"
+                }),
+            ]
+        );
+
+        let method_plan: Vec<_> = registry
+            .method_bindings("config.process")
+            .into_iter()
+            .map(|binding| {
+                serde_json::json!({
+                    "plugin_id": binding.plugin_id,
+                    "priority": binding.priority,
+                    "pattern": binding.pattern,
+                })
+            })
+            .collect();
+
+        assert_eq!(
+            serde_json::to_string_pretty(&method_plan).unwrap(),
+            r#"[
+  {
+    "pattern": "config.*",
+    "plugin_id": "example.methods",
+    "priority": 10
+  },
+  {
+    "pattern": "config.process",
+    "plugin_id": "example.methods",
+    "priority": 10
+  }
+]"#
+        );
+    }
+
+    #[test]
     fn registry_blocks_single_owner_conflicts() {
         let mut registry = PluginRegistry::new();
         registry
@@ -637,6 +829,33 @@ mod tests {
                 Slot::AUTH_SESSION,
                 SlotPhase::Exec,
                 SlotPolicy::Pipeline,
+            ))
+            .unwrap_err();
+
+        assert_eq!(error.code, "invalid_input");
+        assert!(error.message.contains("already has owner"));
+    }
+
+    #[test]
+    fn registry_rejects_second_single_owner_claim() {
+        let mut registry = PluginRegistry::new();
+        registry
+            .register(manifest(
+                "example.identity",
+                0,
+                Slot::AUTH_SESSION,
+                SlotPhase::Exec,
+                SlotPolicy::SingleOwner,
+            ))
+            .unwrap();
+
+        let error = registry
+            .register(manifest(
+                "example.identity_observer",
+                1,
+                Slot::AUTH_SESSION,
+                SlotPhase::Exec,
+                SlotPolicy::SingleOwner,
             ))
             .unwrap_err();
 
