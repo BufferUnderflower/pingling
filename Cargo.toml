@@ -1,0 +1,54 @@
+[workspace]
+members = [
+  "crates/domain",
+  "crates/core",
+  "crates/mocks/core-mock",
+  "crates/cores/core-process",
+  "crates/cores/core-singbox",
+  "crates/shared/netwatch",
+  "crates/shared/clash-api",
+  "crates/shared/proxy-dto",
+  "crates/shared/storage",
+  "crates/shared/paths",
+  "crates/shared/config",
+  "crates/shared/util",
+  "crates/config/pipeline",
+  "crates/plugin_runtime/host-contract",
+  "crates/plugin_runtime/host-runtime",
+  "crates/plugin_runtime/plugin-component",
+  "crates/extension_slots_service/primitive-host",
+  "crates/extension_slots/rpc_macro",
+  "crates/extension_slots/ipc",
+]
+resolver = "2"
+
+[workspace.package]
+edition = "2021"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/BufferUnderflower/pingling"
+rust-version = "1.82"
+
+[workspace.dependencies]
+pingling-domain = { path = "crates/domain" }
+pingling-core = { path = "crates/core" }
+pingling-core-mock = { path = "crates/mocks/core-mock" }
+pingling-core-process = { path = "crates/cores/core-process" }
+pingling-core-singbox = { path = "crates/cores/core-singbox" }
+pingling-netwatch = { path = "crates/shared/netwatch" }
+pingling-clash-api = { path = "crates/shared/clash-api" }
+pingling-proxy-dto = { path = "crates/shared/proxy-dto" }
+pingling-storage = { path = "crates/shared/storage" }
+pingling-paths = { path = "crates/shared/paths" }
+pingling-config = { path = "crates/shared/config" }
+pingling-util = { path = "crates/shared/util" }
+pingling-config-pipeline = { path = "crates/config/pipeline" }
+pingling-host-contract = { path = "crates/plugin_runtime/host-contract" }
+pingling-host-runtime = { path = "crates/plugin_runtime/host-runtime" }
+pingling-plugin-component = { path = "crates/plugin_runtime/plugin-component" }
+pingling-primitive-host = { path = "crates/extension_slots_service/primitive-host" }
+pingling-ipc-macros = { path = "crates/extension_slots/rpc_macro" }
+pingling-ipc = { path = "crates/extension_slots/ipc" }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+log = "0.4"
+wasmtime = { version = "41.0.4", features = ["pulley"] }

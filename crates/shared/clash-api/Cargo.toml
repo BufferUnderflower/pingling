@@ -1,0 +1,15 @@
+[package]
+name = "pingling-clash-api"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+description = "Clash REST/WebSocket API client for sing-box's clash-compatible controller API."
+
+[dependencies]
+percent-encoding = "2.3.1"
+serde.workspace = true
+serde_json.workspace = true
+tungstenite = "0.24.0"
+url = "2.5.4"

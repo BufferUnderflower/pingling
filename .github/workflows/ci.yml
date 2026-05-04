@@ -1,0 +1,91 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+    tags:
+      - "v*"
+
+permissions:
+  contents: read
+
+jobs:
+  fmt:
+    if: github.event_name == 'pull_request' || github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo fmt --all --check
+
+  check:
+    if: github.event_name == 'pull_request' || github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo check --workspace --all-targets --locked
+
+  test:
+    if: github.event_name == 'pull_request' || github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo install cargo-nextest --locked
+      - run: cargo nextest run --workspace --all-targets --locked --junit-file target/nextest/junit.xml
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: junit-nextest
+          path: target/nextest/junit.xml
+
+  release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo fmt --all --check
+      - run: cargo check --workspace --all-targets --locked
+      - run: cargo install cargo-nextest --locked
+      - run: cargo nextest run --workspace --all-targets --locked --junit-file target/nextest/junit.xml
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: junit-nextest-${{ github.ref_name }}
+          path: target/nextest/junit.xml
+      - run: cargo build -p pingling-primitive-host --release --locked
+      - name: Package release files
+        run: |
+          mkdir -p "dist/pingling-${GITHUB_REF_NAME}-linux-x86_64"
+          cp target/release/pingling-primitive-host \
+            "dist/pingling-${GITHUB_REF_NAME}-linux-x86_64/"
+          cp README.md "dist/pingling-${GITHUB_REF_NAME}-linux-x86_64/"
+          tar -C dist -czf \
+            "pingling-${GITHUB_REF_NAME}-linux-x86_64.tar.gz" \
+            "pingling-${GITHUB_REF_NAME}-linux-x86_64"
+      - name: Archive source
+        run: |
+          git archive --format=tar.gz --prefix="pingling-${GITHUB_REF_NAME}/" \
+            -o "pingling-${GITHUB_REF_NAME}.tar.gz" HEAD
+      - uses: actions/upload-artifact@v4
+        with:
+          name: pingling-${{ github.ref_name }}
+          path: |
+            pingling-${{ github.ref_name }}.tar.gz
+            pingling-${{ github.ref_name }}-linux-x86_64.tar.gz
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            pingling-${{ github.ref_name }}.tar.gz
+            pingling-${{ github.ref_name }}-linux-x86_64.tar.gz
+          generate_release_notes: true

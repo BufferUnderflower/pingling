@@ -1,0 +1,24 @@
+[package]
+name = "pingling-ipc"
+version = "0.1.0"
+edition = "2021"
+license = "MIT OR Apache-2.0"
+description = "Generic JSON-RPC 2.0 IPC framework: protocol types, event broadcaster, discovery, slot observer, logging."
+
+[features]
+default = []
+
+[dependencies]
+pingling-domain = { workspace = true }
+pingling-util = { workspace = true }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+log = "0.4"
+env_logger = { version = "0.11" }
+
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
+[dev-dependencies]
+serial_test = "3"
+tempfile = "3"
