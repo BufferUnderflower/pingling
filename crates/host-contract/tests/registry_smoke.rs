@@ -15,6 +15,7 @@ fn manifest(id: &str, priority: i32, slot: &str, policy: SlotPolicy) -> PluginMa
         .expect("valid slot binding")],
         needs: Vec::new(),
         allowed_hosts: Vec::new(),
+        package: None,
     }
 }
 

@@ -1,10 +1,19 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::error::Error;
 use std::fmt;
 
 use serde::{Deserialize, Serialize};
 
+mod contract;
 pub mod payloads;
+
+pub use contract::{
+    render_wit_world, CompatibilityRange, ComponentDescriptor, ComponentFunctionDescriptor,
+    ComponentInterfaceDescriptor, ComponentRecordDescriptor, ContractInventorySummary,
+    EventDescriptor, HostCapabilityDescriptor, HostCapabilityKind, IpcPackageDescriptor,
+    MergedContractRegistry, MethodDescriptor, MethodErrorDescriptor, OwnedEventDescriptor,
+    OwnedMethodDescriptor, WitFieldDescriptor, WitResultDescriptor,
+};
 
 pub const HOST_PROTOCOL_VERSION: &str = "pingling.host.v1";
 pub const DEFAULT_WIRE_VERSION: u32 = 1;
@@ -210,7 +219,7 @@ impl SlotBinding {
     }
 }
 
-#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct PluginManifest {
     pub id: String,
     #[serde(default)]
@@ -223,6 +232,8 @@ pub struct PluginManifest {
     pub needs: Vec<String>,
     #[serde(default)]
     pub allowed_hosts: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub package: Option<IpcPackageDescriptor>,
 }
 
 impl PluginManifest {
@@ -236,6 +247,7 @@ impl PluginManifest {
             slots: Vec::new(),
             needs: Vec::new(),
             allowed_hosts: Vec::new(),
+            package: None,
         })
     }
 
@@ -258,7 +270,63 @@ impl PluginManifest {
                 )));
             }
         }
+        if let Some(package) = &self.package {
+            package.validate()?;
+            if package.id != self.id {
+                return Err(HostFailure::invalid_input(format!(
+                    "manifest id {} does not match package id {}",
+                    self.id, package.id
+                )));
+            }
+        }
         Ok(())
+    }
+
+    pub fn dispatch_methods(&self) -> Vec<String> {
+        let mut methods = BTreeSet::new();
+        methods.extend(self.methods.iter().cloned());
+        if let Some(package) = self.normalized_package() {
+            methods.extend(package.methods.into_iter().map(|method| method.name));
+        }
+        methods.into_iter().collect()
+    }
+
+    pub fn normalized_package(&self) -> Option<IpcPackageDescriptor> {
+        let package_is_explicit = self.package.is_some();
+        let mut package = match &self.package {
+            Some(package) => package.clone(),
+            None => IpcPackageDescriptor::new(self.id.clone()).ok()?,
+        };
+
+        if package.slots.is_empty() {
+            package.slots = self.slots.clone();
+        } else {
+            for slot in &self.slots {
+                if !package.slots.contains(slot) {
+                    package.slots.push(slot.clone());
+                }
+            }
+        }
+
+        if !package_is_explicit {
+            for method in self.methods.iter().filter(|method| !method.ends_with(".*")) {
+                if !package
+                    .methods
+                    .iter()
+                    .any(|descriptor| descriptor.name == *method)
+                {
+                    package
+                        .methods
+                        .push(MethodDescriptor::opaque(method.clone()).ok()?);
+                }
+            }
+        }
+
+        let mut capabilities = package.required_capabilities.clone();
+        merge_manifest_capabilities(&mut capabilities, &self.needs, &self.allowed_hosts);
+        package.required_capabilities = capabilities;
+
+        Some(package)
     }
 }
 
@@ -278,7 +346,7 @@ pub struct MethodBinding {
     pub pattern: String,
 }
 
-#[derive(Clone, Debug, Default, Eq, PartialEq)]
+#[derive(Clone, Debug, Default, PartialEq)]
 pub struct PluginRegistry {
     plugins: BTreeMap<String, PluginManifest>,
 }
@@ -341,18 +409,21 @@ impl PluginRegistry {
         let mut bindings: Vec<_> = self
             .plugins
             .values()
-            .flat_map(|manifest| {
-                manifest.methods.iter().filter_map(move |pattern| {
-                    if method_matches(pattern, method) {
-                        Some(MethodBinding {
-                            plugin_id: manifest.id.clone(),
-                            priority: manifest.priority,
-                            pattern: pattern.clone(),
-                        })
-                    } else {
-                        None
-                    }
-                })
+            .filter_map(|manifest| {
+                manifest
+                    .dispatch_methods()
+                    .into_iter()
+                    .filter(|pattern| method_matches(pattern, method))
+                    .max_by(|left, right| {
+                        method_pattern_specificity(left)
+                            .cmp(&method_pattern_specificity(right))
+                            .then_with(|| left.cmp(right))
+                    })
+                    .map(|pattern| MethodBinding {
+                        plugin_id: manifest.id.clone(),
+                        priority: manifest.priority,
+                        pattern,
+                    })
             })
             .collect();
         bindings.sort_by(|left, right| {
@@ -362,6 +433,16 @@ impl PluginRegistry {
                 .then_with(|| left.pattern.cmp(&right.pattern))
         });
         bindings
+    }
+
+    pub fn merged_contract(&self) -> HostResult<MergedContractRegistry> {
+        let mut merged = MergedContractRegistry::new();
+        for manifest in self.plugins.values() {
+            if let Some(package) = manifest.normalized_package() {
+                merged.register_package(package)?;
+            }
+        }
+        Ok(merged)
     }
 
     fn validate_single_owner_conflicts(&self, manifest: &PluginManifest) -> HostResult<()> {
@@ -379,7 +460,55 @@ impl PluginRegistry {
                 }
             }
         }
+        if let Some(package) = manifest.normalized_package() {
+            for method in package.methods {
+                if let Some(existing) = self.method_owner(&method.name) {
+                    return Err(HostFailure::invalid_input(format!(
+                        "method {} is already owned by {}",
+                        method.name, existing
+                    )));
+                }
+            }
+            for event in package.events {
+                if let Some(existing) = self.event_owner(&event.name) {
+                    return Err(HostFailure::invalid_input(format!(
+                        "event {} is already owned by {}",
+                        event.name, existing
+                    )));
+                }
+            }
+        }
         Ok(())
+    }
+
+    fn method_owner(&self, method: &str) -> Option<&str> {
+        self.plugins
+            .values()
+            .filter_map(|manifest| {
+                manifest.normalized_package().and_then(|package| {
+                    package
+                        .methods
+                        .into_iter()
+                        .any(|descriptor| descriptor.name == method)
+                        .then_some(manifest.id.as_str())
+                })
+            })
+            .next()
+    }
+
+    fn event_owner(&self, event: &str) -> Option<&str> {
+        self.plugins
+            .values()
+            .filter_map(|manifest| {
+                manifest.normalized_package().and_then(|package| {
+                    package
+                        .events
+                        .into_iter()
+                        .any(|descriptor| descriptor.name == event)
+                        .then_some(manifest.id.as_str())
+                })
+            })
+            .next()
     }
 }
 
@@ -533,11 +662,50 @@ fn validate_host_pattern(value: &str) -> HostResult<()> {
     }
 }
 
+fn merge_manifest_capabilities(
+    capabilities: &mut Vec<HostCapabilityDescriptor>,
+    needs: &[String],
+    allowed_hosts: &[String],
+) {
+    let mut indexed = capabilities
+        .iter()
+        .map(|capability| (capability.kind.clone(), capability.name.clone()))
+        .collect::<BTreeSet<_>>();
+
+    for need in needs {
+        let capability = HostCapabilityDescriptor {
+            kind: HostCapabilityKind::Need,
+            name: need.clone(),
+        };
+        if indexed.insert((capability.kind.clone(), capability.name.clone())) {
+            capabilities.push(capability);
+        }
+    }
+
+    for host in allowed_hosts {
+        let capability = HostCapabilityDescriptor {
+            kind: HostCapabilityKind::HttpHost,
+            name: host.clone(),
+        };
+        if indexed.insert((capability.kind.clone(), capability.name.clone())) {
+            capabilities.push(capability);
+        }
+    }
+}
+
 fn method_matches(pattern: &str, method: &str) -> bool {
     if let Some(prefix) = pattern.strip_suffix(".*") {
         method == prefix || method.starts_with(&format!("{prefix}."))
     } else {
         pattern == method
+    }
+}
+
+fn method_pattern_specificity(pattern: &str) -> (u8, usize) {
+    if let Some(prefix) = pattern.strip_suffix(".*") {
+        (0, prefix.len())
+    } else {
+        (1, pattern.len())
     }
 }
 
@@ -559,6 +727,7 @@ mod tests {
             slots: vec![SlotBinding::new(Slot::new(slot).unwrap(), vec![phase], policy).unwrap()],
             needs: Vec::new(),
             allowed_hosts: Vec::new(),
+            package: None,
         }
     }
 
@@ -602,6 +771,7 @@ mod tests {
             .unwrap()],
             needs: vec!["host.http.v1".to_owned()],
             allowed_hosts: vec!["*.example.test".to_owned()],
+            package: None,
         };
 
         let encoded = serde_json::to_string(&manifest).unwrap();
@@ -625,6 +795,7 @@ mod tests {
             .unwrap()],
             needs: vec!["host.http.v1".to_owned()],
             allowed_hosts: vec!["*.example.test".to_owned()],
+            package: None,
         };
 
         let encoded = serde_json::to_string_pretty(&manifest).unwrap();
@@ -796,11 +967,6 @@ mod tests {
             serde_json::to_string_pretty(&method_plan).unwrap(),
             r#"[
   {
-    "pattern": "config.*",
-    "plugin_id": "example.methods",
-    "priority": 10
-  },
-  {
     "pattern": "config.process",
     "plugin_id": "example.methods",
     "priority": 10
@@ -884,5 +1050,167 @@ mod tests {
 
         assert_eq!(ids, ["example.login", "example.all_auth"]);
         assert!(registry.method_bindings("profile.get").is_empty());
+    }
+
+    #[test]
+    fn manifest_package_extends_dispatch_and_capabilities() {
+        let mut manifest = PluginManifest::new("example.auth").unwrap();
+        manifest.methods = vec!["auth.*".to_owned()];
+        manifest.allowed_hosts = vec!["hub.example.test".to_owned()];
+        manifest.needs = vec!["host.http.v1".to_owned()];
+        manifest.package = Some(IpcPackageDescriptor {
+            id: "example.auth".to_owned(),
+            version: Some("1.0.0".to_owned()),
+            domain: Some("auth".to_owned()),
+            compatibility: None,
+            methods: vec![MethodDescriptor::opaque("auth.login").unwrap()],
+            events: vec![],
+            slots: vec![],
+            required_capabilities: vec![HostCapabilityDescriptor::new(
+                HostCapabilityKind::Permission,
+                "session.write",
+            )
+            .unwrap()],
+            component: None,
+        });
+
+        let package = manifest.normalized_package().unwrap();
+        let method_names: Vec<_> = package
+            .methods
+            .into_iter()
+            .map(|method| method.name)
+            .collect();
+        assert_eq!(method_names, ["auth.login"]);
+        assert!(package.required_capabilities.iter().any(|capability| {
+            capability.kind == HostCapabilityKind::Need && capability.name == "host.http.v1"
+        }));
+        assert!(package.required_capabilities.iter().any(|capability| {
+            capability.kind == HostCapabilityKind::HttpHost && capability.name == "hub.example.test"
+        }));
+
+        let dispatch_methods = manifest.dispatch_methods();
+        assert!(dispatch_methods.iter().any(|method| method == "auth.*"));
+        assert!(dispatch_methods.iter().any(|method| method == "auth.login"));
+    }
+
+    #[test]
+    fn manifest_rejects_mismatched_package_id() {
+        let mut manifest = PluginManifest::new("example.auth").unwrap();
+        manifest.package = Some(IpcPackageDescriptor {
+            id: "example.other".to_owned(),
+            version: None,
+            domain: None,
+            compatibility: None,
+            methods: vec![],
+            events: vec![],
+            slots: vec![],
+            required_capabilities: vec![],
+            component: None,
+        });
+
+        let error = manifest.validate().unwrap_err();
+        assert_eq!(error.code, "invalid_input");
+        assert!(error.message.contains("manifest id example.auth does not match package id example.other"));
+    }
+
+    #[test]
+    fn registry_rejects_duplicate_exact_package_methods() {
+        let mut registry = PluginRegistry::new();
+        let mut first = PluginManifest::new("example.first").unwrap();
+        first.package = Some(IpcPackageDescriptor {
+            id: "example.first".to_owned(),
+            version: None,
+            domain: None,
+            compatibility: None,
+            methods: vec![MethodDescriptor::opaque("auth.login").unwrap()],
+            events: vec![],
+            slots: vec![],
+            required_capabilities: vec![],
+            component: None,
+        });
+        registry.register(first).unwrap();
+
+        let mut second = PluginManifest::new("example.second").unwrap();
+        second.package = Some(IpcPackageDescriptor {
+            id: "example.second".to_owned(),
+            version: None,
+            domain: None,
+            compatibility: None,
+            methods: vec![MethodDescriptor::opaque("auth.login").unwrap()],
+            events: vec![],
+            slots: vec![],
+            required_capabilities: vec![],
+            component: None,
+        });
+        let error = registry.register(second).unwrap_err();
+
+        assert_eq!(error.code, "invalid_input");
+        assert!(error.message.contains("auth.login"));
+    }
+
+    #[test]
+    fn registry_rejects_duplicate_exact_package_events() {
+        let mut registry = PluginRegistry::new();
+        let mut first = PluginManifest::new("example.first").unwrap();
+        first.package = Some(IpcPackageDescriptor {
+            id: "example.first".to_owned(),
+            version: None,
+            domain: None,
+            compatibility: None,
+            methods: vec![],
+            events: vec![EventDescriptor::new("event.authChanged").unwrap()],
+            slots: vec![],
+            required_capabilities: vec![],
+            component: None,
+        });
+        registry.register(first).unwrap();
+
+        let mut second = PluginManifest::new("example.second").unwrap();
+        second.package = Some(IpcPackageDescriptor {
+            id: "example.second".to_owned(),
+            version: None,
+            domain: None,
+            compatibility: None,
+            methods: vec![],
+            events: vec![EventDescriptor::new("event.authChanged").unwrap()],
+            slots: vec![],
+            required_capabilities: vec![],
+            component: None,
+        });
+        let error = registry.register(second).unwrap_err();
+
+        assert_eq!(error.code, "invalid_input");
+        assert!(error.message.contains("event.authChanged"));
+    }
+
+    #[test]
+    fn merged_contract_indexes_exact_methods_and_events() {
+        let mut registry = PluginRegistry::new();
+        let mut manifest = PluginManifest::new("example.package").unwrap();
+        manifest.package = Some(IpcPackageDescriptor {
+            id: "example.package".to_owned(),
+            version: Some("1.2.3".to_owned()),
+            domain: Some("billing".to_owned()),
+            compatibility: None,
+            methods: vec![MethodDescriptor::opaque("billing.catalog").unwrap()],
+            events: vec![EventDescriptor::new("event.billingChanged").unwrap()],
+            slots: vec![],
+            required_capabilities: vec![],
+            component: None,
+        });
+        registry.register(manifest).unwrap();
+
+        let merged = registry.merged_contract().unwrap();
+        let inventory = merged.inventory_summary();
+        assert_eq!(inventory.methods, ["billing.catalog"]);
+        assert_eq!(inventory.events, ["event.billingChanged"]);
+        assert_eq!(
+            merged.method_owner("billing.catalog"),
+            Some("example.package")
+        );
+        assert_eq!(
+            merged.event_owner("event.billingChanged"),
+            Some("example.package")
+        );
     }
 }
