@@ -239,6 +239,8 @@ impl ComponentRecordDescriptor {
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub struct ComponentInterfaceDescriptor {
     pub name: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub external: Option<String>,
     #[serde(default)]
     pub records: Vec<ComponentRecordDescriptor>,
     #[serde(default)]
@@ -248,6 +250,15 @@ pub struct ComponentInterfaceDescriptor {
 impl ComponentInterfaceDescriptor {
     pub fn validate(&self) -> HostResult<()> {
         validate_wit_identifier("WIT interface", &self.name)?;
+        if let Some(external) = &self.external {
+            validate_wit_import_path("WIT external import", external)?;
+            if !self.records.is_empty() || !self.functions.is_empty() {
+                return Err(HostFailure::invalid_input(format!(
+                    "WIT interface {} cannot declare local records or functions when external import {external} is set",
+                    self.name
+                )));
+            }
+        }
         let mut records = BTreeSet::new();
         for record in &self.records {
             record.validate()?;
@@ -382,13 +393,18 @@ pub fn render_wit_world(component: &ComponentDescriptor) -> HostResult<String> {
     out.push_str(&format!("package {};\n\n", component.wit_package));
 
     for interface in component.imports.iter().chain(component.exports.iter()) {
-        render_interface(&mut out, interface);
-        out.push('\n');
+        if interface.external.is_none() {
+            render_interface(&mut out, interface);
+            out.push('\n');
+        }
     }
 
     out.push_str(&format!("world {} {{\n", component.world));
     for interface in &component.imports {
-        out.push_str(&format!("  import {};\n", interface.name));
+        match &interface.external {
+            Some(external) => out.push_str(&format!("  import {external};\n")),
+            None => out.push_str(&format!("  import {};\n", interface.name)),
+        }
     }
     for interface in &component.exports {
         out.push_str(&format!("  export {};\n", interface.name));
@@ -604,6 +620,29 @@ fn validate_wit_package(value: &str) -> HostResult<()> {
     validate_wit_identifier("WIT package name", package)
 }
 
+fn validate_wit_import_path(kind: &str, value: &str) -> HostResult<()> {
+    if value.is_empty() {
+        return Err(HostFailure::invalid_input(format!(
+            "{kind} must not be empty"
+        )));
+    }
+    if !value.contains(':') || !value.contains('/') {
+        return Err(HostFailure::invalid_input(format!(
+            "{kind} must use namespace:package/interface form"
+        )));
+    }
+    if value
+        .chars()
+        .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, ':' | '/' | '@' | '.' | '-' | '_'))
+    {
+        Ok(())
+    } else {
+        Err(HostFailure::invalid_input(format!(
+            "{kind} contains unsupported characters"
+        )))
+    }
+}
+
 fn validate_wit_identifier(kind: &str, value: &str) -> HostResult<()> {
     if value.is_empty() {
         return Err(HostFailure::invalid_input(format!(
@@ -658,6 +697,14 @@ fn validate_component_interfaces(
     let mut names = BTreeSet::new();
     for interface in interfaces {
         interface.validate()?;
+        if kind == "export" {
+            if let Some(external) = &interface.external {
+                return Err(HostFailure::invalid_input(format!(
+                    "WIT export interface {} cannot use external import {external}",
+                    interface.name
+                )));
+            }
+        }
         if !names.insert(interface.name.as_str()) {
             return Err(HostFailure::invalid_input(format!(
                 "WIT {kind} interface {} is declared more than once",
@@ -666,4 +713,66 @@ fn validate_component_interfaces(
         }
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{
+        render_wit_world, ComponentDescriptor, ComponentFunctionDescriptor,
+        ComponentInterfaceDescriptor, WitResultDescriptor,
+    };
+
+    #[test]
+    fn renders_external_wasi_imports_without_local_interface_body() {
+        let component = ComponentDescriptor {
+            wit_package: "pingle:ipc-plugin".to_owned(),
+            world: "plugin".to_owned(),
+            imports: vec![ComponentInterfaceDescriptor {
+                name: "wasi-http-outgoing-handler".to_owned(),
+                external: Some("wasi:http/outgoing-handler@0.2.9".to_owned()),
+                records: Vec::new(),
+                functions: Vec::new(),
+            }],
+            exports: vec![ComponentInterfaceDescriptor {
+                name: "geo".to_owned(),
+                external: None,
+                records: Vec::new(),
+                functions: vec![ComponentFunctionDescriptor {
+                    name: "current".to_owned(),
+                    params: Vec::new(),
+                    result: Some(WitResultDescriptor {
+                        ok: Some("string".to_owned()),
+                        err: Some("string".to_owned()),
+                    }),
+                }],
+            }],
+        };
+
+        let wit = render_wit_world(&component).unwrap();
+
+        assert!(wit.contains("import wasi:http/outgoing-handler@0.2.9;"));
+        assert!(!wit.contains("interface wasi-http-outgoing-handler"));
+        assert!(wit.contains("interface geo {"));
+        assert!(wit.contains("current: func() -> result<string, string>;"));
+    }
+
+    #[test]
+    fn rejects_external_wit_exports() {
+        let component = ComponentDescriptor {
+            wit_package: "pingle:ipc-plugin".to_owned(),
+            world: "plugin".to_owned(),
+            imports: Vec::new(),
+            exports: vec![ComponentInterfaceDescriptor {
+                name: "bad".to_owned(),
+                external: Some("wasi:http/outgoing-handler@0.2.9".to_owned()),
+                records: Vec::new(),
+                functions: Vec::new(),
+            }],
+        };
+
+        let error = render_wit_world(&component).unwrap_err().to_string();
+
+        assert!(error.contains("external import"));
+        assert!(error.contains("bad"));
+    }
 }
