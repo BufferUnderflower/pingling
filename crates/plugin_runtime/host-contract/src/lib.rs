@@ -1096,6 +1096,28 @@ mod tests {
     }
 
     #[test]
+    fn manifest_rejects_mismatched_package_id() {
+        let mut manifest = PluginManifest::new("example.identity").unwrap();
+        manifest.package = Some(IpcPackageDescriptor {
+            id: "example.other".to_owned(),
+            version: None,
+            domain: None,
+            compatibility: None,
+            methods: vec![],
+            events: vec![],
+            slots: vec![],
+            required_capabilities: vec![],
+            component: None,
+        });
+
+        let error = manifest.validate().unwrap_err();
+        assert_eq!(error.code, "invalid_input");
+        assert!(error
+            .message
+            .contains("manifest id example.identity does not match package id example.other"));
+    }
+
+    #[test]
     fn registry_rejects_duplicate_exact_package_methods() {
         let mut registry = PluginRegistry::new();
         let mut first = PluginManifest::new("example.first").unwrap();
@@ -1128,6 +1150,41 @@ mod tests {
 
         assert_eq!(error.code, "invalid_input");
         assert!(error.message.contains("identity.login"));
+    }
+
+    #[test]
+    fn registry_rejects_duplicate_exact_package_events() {
+        let mut registry = PluginRegistry::new();
+        let mut first = PluginManifest::new("example.first").unwrap();
+        first.package = Some(IpcPackageDescriptor {
+            id: "example.first".to_owned(),
+            version: None,
+            domain: None,
+            compatibility: None,
+            methods: vec![],
+            events: vec![EventDescriptor::new("event.identityChanged").unwrap()],
+            slots: vec![],
+            required_capabilities: vec![],
+            component: None,
+        });
+        registry.register(first).unwrap();
+
+        let mut second = PluginManifest::new("example.second").unwrap();
+        second.package = Some(IpcPackageDescriptor {
+            id: "example.second".to_owned(),
+            version: None,
+            domain: None,
+            compatibility: None,
+            methods: vec![],
+            events: vec![EventDescriptor::new("event.identityChanged").unwrap()],
+            slots: vec![],
+            required_capabilities: vec![],
+            component: None,
+        });
+        let error = registry.register(second).unwrap_err();
+
+        assert_eq!(error.code, "invalid_input");
+        assert!(error.message.contains("event.identityChanged"));
     }
 
     #[test]
