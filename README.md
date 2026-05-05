@@ -6,7 +6,7 @@ This repository intentionally contains only:
 
 - stable slot names and payload envelopes;
 - manifest and registry types for composing multiple extensions;
-- WIT/component package descriptors and runtime defaults;
+- WIT/component runtime defaults;
 - deterministic ordering and conflict rules for slot ownership;
 - host/runtime traits used by extension runners;
 - configurable path, storage, process-core, config-pipeline, netwatch, and
