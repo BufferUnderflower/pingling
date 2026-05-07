@@ -58,7 +58,6 @@ The public contract names the common daemon slots:
 - `auth.session`
 - `vpn.connect`
 - `vpn.disconnect`
-- `ipc.dispatch`
 - `plugin.load`
 
 Slots run in phase order: `before`, `exec`, `after`. Multiple extensions can

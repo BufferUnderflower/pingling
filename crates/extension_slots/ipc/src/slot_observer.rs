@@ -33,7 +33,7 @@
 //! The observer exposes a `set_broadcast_enabled(bool)` and a
 //! `set_log_enabled(bool)` switch so the daemon can react to config
 //! changes at runtime without replacing the Arc. Default: both
-//! enabled. On hot slots (`ipc.dispatch`) consider wiring the
+//! enabled. For noisy operational slots consider wiring the
 //! `PINGLING_SLOT_BROADCAST` env var to turn broadcasting off in
 //! production builds until a listener is actually expected.
 

@@ -28,7 +28,6 @@ impl Slot {
     pub const AUTH_SESSION: &'static str = "auth.session";
     pub const VPN_CONNECT: &'static str = "vpn.connect";
     pub const VPN_DISCONNECT: &'static str = "vpn.disconnect";
-    pub const IPC_DISPATCH: &'static str = "ipc.dispatch";
     pub const PLUGIN_LOAD: &'static str = "plugin.load";
     pub const CORE_START: &'static str = "core.start";
     pub const CORE_STOP: &'static str = "core.stop";
@@ -55,7 +54,6 @@ impl Slot {
         Self::AUTH_SESSION,
         Self::VPN_CONNECT,
         Self::VPN_DISCONNECT,
-        Self::IPC_DISPATCH,
         Self::PLUGIN_LOAD,
         Self::CORE_START,
         Self::CORE_STOP,

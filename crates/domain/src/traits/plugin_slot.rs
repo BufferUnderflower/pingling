@@ -103,12 +103,6 @@ pub mod slot_names {
     /// is the natural place to flush metrics or rotate tokens.
     pub const VPN_DISCONNECT: &str = "vpn.disconnect";
 
-    /// Generic IPC method dispatch. Every JSON-RPC method call passes
-    /// through here as a cross-cutting hook, so telemetry plugins can
-    /// record every client interaction without knowing the methods.
-    /// Payload: `{method, params}`.
-    pub const IPC_DISPATCH: &str = "ipc.dispatch";
-
     /// Invoked once when the daemon finishes loading a plugin.
     /// `exec` payload is empty — the plugin uses `after` to publish
     /// its capability declarations or schedule a warm-up job.

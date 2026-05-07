@@ -13,7 +13,7 @@
 //!
 //! 1. **Wired slots** — schemas + call sites both exist. Wiring the
 //!    chain just happens. Examples: [`VpnConnectPayload`],
-//!    [`VpnDisconnectPayload`], [`IpcDispatchPayload`].
+//!    [`VpnDisconnectPayload`].
 //!
 //! 2. **Scaffolded slots** — schemas exist, no call site yet. The
 //!    first caller drops in a one-liner that fires the chain. No
@@ -130,54 +130,6 @@ pub struct DisconnectResult {
 }
 
 // ---------------------------------------------------------------------------
-
-/// Wire version for [`IpcDispatchPayload`].
-pub const IPC_DISPATCH_WIRE_VERSION: u32 = 1;
-
-/// Payload for `slot.ipc.dispatch.*`.
-///
-/// Fires on every JSON-RPC call the daemon dispatches, so this is
-/// the single cross-cutting hook for telemetry, rate limiting,
-/// audit logging, method-level feature flags, etc. Claim sparingly
-/// — plugins that want to observe *every* client interaction do so
-/// here, but the slot is on the hot path so keep phase work cheap.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct IpcDispatchPayload {
-    /// JSON-RPC method name (e.g. `"vpn.connect"`, `"profile.list"`).
-    pub method: String,
-
-    /// JSON-RPC `params` object forwarded verbatim. Plugins that
-    /// don't care about the arguments can ignore this field.
-    pub params: Value,
-
-    /// Optional transport hint: `"uds"`, `"tcp"`. Filled in by the
-    /// caller when available. Plugins can use this to rate-limit
-    /// per transport, or restrict sensitive methods to UDS only.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub transport: Option<String>,
-
-    /// Populated by `after` with the method's outcome — `result`
-    /// field on success, `error` on failure.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub outcome: Option<IpcDispatchOutcome>,
-}
-
-/// Compact dispatch result carried in [`IpcDispatchPayload::outcome`].
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct IpcDispatchOutcome {
-    /// `true` if the JSON-RPC response will carry a `result` field.
-    pub ok: bool,
-    /// Error code when `ok == false` (JSON-RPC error codes). `i64`
-    /// to match `protocol::RpcError::code`; codes fit in `i32` in
-    /// practice but the host struct stays faithful to the wire type.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub error_code: Option<i64>,
-    /// Error message when `ok == false`.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub error_message: Option<String>,
-    /// Wall-clock time spent inside the method handler.
-    pub duration_us: u64,
-}
 
 // ===========================================================================
 // SCAFFOLDED — slots 4–11 (schemas defined, call sites pending)
@@ -407,31 +359,6 @@ mod tests {
     }
 
     #[test]
-    fn ipc_dispatch_payload_round_trip() {
-        round_trip(IpcDispatchPayload {
-            method: "vpn.status".into(),
-            params: json!({}),
-            transport: Some("uds".into()),
-            outcome: Some(IpcDispatchOutcome {
-                ok: true,
-                error_code: None,
-                error_message: None,
-                duration_us: 450,
-            }),
-        });
-    }
-
-    #[test]
-    fn ipc_dispatch_error_outcome_round_trip() {
-        round_trip(IpcDispatchOutcome {
-            ok: false,
-            error_code: Some(-32601),
-            error_message: Some("MethodNotFound".into()),
-            duration_us: 12,
-        });
-    }
-
-    #[test]
     fn scaffolded_payloads_round_trip() {
         round_trip(CoreStartPayload {
             core_type: "sing-box".into(),
@@ -485,7 +412,6 @@ mod tests {
         // caller forgets to stamp the context).
         assert!(VPN_CONNECT_WIRE_VERSION >= 1);
         assert!(VPN_DISCONNECT_WIRE_VERSION >= 1);
-        assert!(IPC_DISPATCH_WIRE_VERSION >= 1);
         assert!(CORE_START_WIRE_VERSION >= 1);
         assert!(CORE_STOP_WIRE_VERSION >= 1);
         assert!(PROFILE_ACTIVATE_WIRE_VERSION >= 1);

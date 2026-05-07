@@ -3,7 +3,6 @@ use serde_json::Value;
 
 pub const VPN_CONNECT_WIRE_VERSION: u32 = 1;
 pub const VPN_DISCONNECT_WIRE_VERSION: u32 = 1;
-pub const IPC_DISPATCH_WIRE_VERSION: u32 = 1;
 pub const CORE_START_WIRE_VERSION: u32 = 1;
 pub const CORE_STOP_WIRE_VERSION: u32 = 1;
 pub const PROFILE_ACTIVATE_WIRE_VERSION: u32 = 1;
@@ -47,26 +46,6 @@ pub struct DisconnectResult {
     pub duration_ms: u64,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct IpcDispatchPayload {
-    pub method: String,
-    pub params: Value,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub transport: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub outcome: Option<IpcDispatchOutcome>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct IpcDispatchOutcome {
-    pub ok: bool,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub error_code: Option<i64>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub error_message: Option<String>,
-    pub duration_us: u64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -283,17 +262,6 @@ mod tests {
                 stopped: true,
                 duration_ms: 120,
                 error: None,
-            }),
-        });
-        round_trip(IpcDispatchPayload {
-            method: "vpn.status".into(),
-            params: json!({}),
-            transport: Some("uds".into()),
-            outcome: Some(IpcDispatchOutcome {
-                ok: true,
-                error_code: None,
-                error_message: None,
-                duration_us: 450,
             }),
         });
     }
