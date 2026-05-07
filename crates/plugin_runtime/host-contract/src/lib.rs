@@ -739,7 +739,7 @@ mod tests {
     fn well_known_slot_index_contains_every_public_slot_constant() {
         assert!(Slot::WELL_KNOWN.contains(&Slot::CONFIG_PROCESS));
         assert!(Slot::WELL_KNOWN.contains(&Slot::TELEMETRY_OBSERVE));
-        assert_eq!(Slot::WELL_KNOWN.len(), 24);
+        assert_eq!(Slot::WELL_KNOWN.len(), 23);
     }
 
     #[test]

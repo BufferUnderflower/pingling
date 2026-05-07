@@ -13,6 +13,7 @@ fn demo_package() -> IpcPackageDescriptor {
         world: "plugin".to_owned(),
         imports: vec![ComponentInterfaceDescriptor {
             name: "events".to_owned(),
+            external: None,
             records: vec![ComponentRecordDescriptor {
                 name: "user-changed".to_owned(),
                 fields: vec![WitFieldDescriptor {
@@ -31,6 +32,7 @@ fn demo_package() -> IpcPackageDescriptor {
         }],
         exports: vec![ComponentInterfaceDescriptor {
             name: "user-api".to_owned(),
+            external: None,
             records: vec![ComponentRecordDescriptor {
                 name: "login-request".to_owned(),
                 fields: vec![WitFieldDescriptor {
