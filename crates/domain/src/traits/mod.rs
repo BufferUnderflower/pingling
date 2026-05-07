@@ -18,13 +18,12 @@ pub use plugin_slot::{
 };
 pub use plugin_slot_payloads::{
     ConnectResult, CoreLifecycleResult, CoreStartPayload, CoreStopPayload, DaemonShutdownPayload,
-    DaemonStartupPayload, DisconnectResult, IpcDispatchOutcome, IpcDispatchPayload, LatencyResult,
-    OutboundSelectPayload, OutboundTestLatencyPayload, ProfileActivatePayload,
-    ProfilePersistPayload, VpnConnectPayload, VpnDisconnectPayload, CORE_START_WIRE_VERSION,
-    CORE_STOP_WIRE_VERSION, DAEMON_SHUTDOWN_WIRE_VERSION, DAEMON_STARTUP_WIRE_VERSION,
-    IPC_DISPATCH_WIRE_VERSION, OUTBOUND_SELECT_WIRE_VERSION, OUTBOUND_TEST_LATENCY_WIRE_VERSION,
-    PROFILE_ACTIVATE_WIRE_VERSION, PROFILE_PERSIST_WIRE_VERSION, VPN_CONNECT_WIRE_VERSION,
-    VPN_DISCONNECT_WIRE_VERSION,
+    DaemonStartupPayload, DisconnectResult, LatencyResult, OutboundSelectPayload,
+    OutboundTestLatencyPayload, ProfileActivatePayload, ProfilePersistPayload, VpnConnectPayload,
+    VpnDisconnectPayload, CORE_START_WIRE_VERSION, CORE_STOP_WIRE_VERSION,
+    DAEMON_SHUTDOWN_WIRE_VERSION, DAEMON_STARTUP_WIRE_VERSION, OUTBOUND_SELECT_WIRE_VERSION,
+    OUTBOUND_TEST_LATENCY_WIRE_VERSION, PROFILE_ACTIVATE_WIRE_VERSION,
+    PROFILE_PERSIST_WIRE_VERSION, VPN_CONNECT_WIRE_VERSION, VPN_DISCONNECT_WIRE_VERSION,
 };
 pub use profile_storage::{
     InstallIdProvider, Profile, ProfileMeta, ProfileSource, ProfileStorage, TempConfigPath,

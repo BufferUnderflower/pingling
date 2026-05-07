@@ -17,7 +17,6 @@ members = [
   "crates/plugin_runtime/host-runtime",
   "crates/plugin_runtime/plugin-component",
   "crates/extension_slots_service/primitive-host",
-  "crates/extension_slots/rpc_macro",
   "crates/extension_slots/ipc",
 ]
 resolver = "2"
@@ -46,7 +45,6 @@ pingling-host-contract = { path = "crates/plugin_runtime/host-contract" }
 pingling-host-runtime = { path = "crates/plugin_runtime/host-runtime" }
 pingling-plugin-component = { path = "crates/plugin_runtime/plugin-component" }
 pingling-primitive-host = { path = "crates/extension_slots_service/primitive-host" }
-pingling-ipc-macros = { path = "crates/extension_slots/rpc_macro" }
 pingling-ipc = { path = "crates/extension_slots/ipc" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
