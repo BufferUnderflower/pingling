@@ -1,0 +1,74 @@
+apiVersion: backstage.io/v1alpha1
+kind: Component
+metadata:
+  name: pingling
+  title: Pingling
+  description: >
+    Public foundation library for generic VPN/domain/runtime primitives,
+    plugin host contracts, and extension-slot support. Pingle product logic
+    must remain outside this repo.
+  annotations:
+    github.com/project-slug: BufferUnderflower/pingling
+    backstage.io/source-location: url:https://github.com/BufferUnderflower/pingling
+    pingle.io/source-of-truth: public-foundation-crates
+    pingle.io/artifact-types: rust-crate,release-archive
+    pingle.io/ci-proof-jobs: fmt,check,test,release
+  tags:
+    - rust
+    - foundation
+    - wit
+    - wasmtime
+    - extension-slots
+  links:
+    - url: https://github.com/BufferUnderflower/pingling
+      title: GitHub Repository
+      icon: github
+spec:
+  type: library
+  lifecycle: production
+  owner: group:pingle-software
+  system: pingle-vpn
+  providesApis:
+    - pingling-wit-host-foundation
+---
+apiVersion: backstage.io/v1alpha1
+kind: API
+metadata:
+  name: pingling-wit-host-foundation
+  title: Pingling WIT Host Foundation
+  description: >
+    Generic host-contract, host-runtime, plugin-component, and extension-slot
+    crates used by Pingle daemon composition code.
+  tags:
+    - rust
+    - wit
+    - wasmtime
+spec:
+  type: rust-crate
+  lifecycle: production
+  owner: group:pingle-software
+  system: pingle-vpn
+  definition: |
+    Workspace areas:
+    - crates/plugin_runtime/host-contract
+    - crates/plugin_runtime/host-runtime
+    - crates/plugin_runtime/plugin-component
+    - crates/extension_slots/ipc
+    - crates/extension_slots_service/primitive-host
+---
+apiVersion: backstage.io/v1alpha1
+kind: Resource
+metadata:
+  name: pingling-release-archive
+  title: Pingling Release Archive
+  description: >
+    GitHub release archive produced for pingling tags.
+  tags:
+    - github-release
+    - rust
+spec:
+  type: release-archive
+  owner: group:pingle-software
+  system: pingle-vpn
+  dependsOn:
+    - component:pingling
