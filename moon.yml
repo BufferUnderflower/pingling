@@ -1,0 +1,47 @@
+id: pingling
+language: rust
+layer: library
+stack: systems
+tags:
+  - component
+  - foundation
+  - public
+  - publishable
+
+project:
+  name: Pingling
+  description: Public host/runtime foundation for extension-driven VPN and proxy hosts.
+
+toolchains:
+  default: rust
+
+tasks:
+  test:
+    command: cargo
+    args:
+      - test
+      - --workspace
+      - --all-targets
+      - --locked
+    inputs:
+      - Cargo.toml
+      - Cargo.lock
+      - crates/**/*
+      - src/**/*
+    toolchain: rust
+
+  build-primitive-host:
+    command: cargo
+    args:
+      - build
+      - -p
+      - pingling-primitive-host
+      - --release
+      - --locked
+    inputs:
+      - Cargo.toml
+      - Cargo.lock
+      - crates/**/*
+    outputs:
+      - target/release/pingling-primitive-host
+    toolchain: rust
