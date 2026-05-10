@@ -1,0 +1,5 @@
+proto:
+  version: '0.56.4'
+
+rust:
+  versionFromPrototools: true

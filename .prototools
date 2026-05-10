@@ -1,0 +1,8 @@
+proto = "0.56.4"
+moon = "2.2.4"
+rust = "1.94.1"
+
+[settings]
+detect-strategy = "prefer-prototools"
+auto-install = true
+unstable-lockfile = true

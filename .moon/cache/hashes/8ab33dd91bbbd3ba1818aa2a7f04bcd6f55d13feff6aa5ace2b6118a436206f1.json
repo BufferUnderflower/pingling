@@ -1,0 +1,1 @@
+[{"projects":{"pingling":{"source":"."}},"configs":{".moon/toolchains.yml":"19fd6bf83e35d3849df9c0edaa079c736d0b85aa",".moon/workspace.yml":"425969111e22499511a8c42aabcc63b92cf1f900","moon.yml":"34d9956e13bbeb2cd12a29c279a42daa9854bdd3"},"env":{"MOON_OUTPUT_STYLE":"","MOON_RETRY_COUNT":""},"inDocker":false,"version":"2.2.4"}]

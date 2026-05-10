@@ -1,0 +1,9 @@
+defaultProject: pingling
+
+projects:
+  pingling: .
+
+vcs:
+  client: git
+  defaultBranch: main
+  provider: github
